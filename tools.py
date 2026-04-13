@@ -186,6 +186,20 @@ def clean_arguments(raw_args: str) -> dict:
     return json.loads(cleaned)
 
 
+def _kill_process_group(process: asyncio.subprocess.Process) -> None:
+    """Kill a process and its entire process group."""
+    import signal as _signal
+
+    try:
+        os.killpg(os.getpgid(process.pid), _signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        pass
+    try:
+        process.kill()
+    except ProcessLookupError:
+        pass
+
+
 async def execute_command(
     command: str, timeout: int = 60
 ) -> AsyncGenerator[str, None]:
@@ -202,6 +216,7 @@ async def execute_command(
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
             stdin=asyncio.subprocess.DEVNULL,
+            start_new_session=True,
         )
         total_chars = 0
         truncated = False
@@ -210,8 +225,7 @@ async def execute_command(
             while True:
                 remaining = deadline - asyncio.get_event_loop().time()
                 if remaining <= 0:
-                    process.kill()
-                    await process.wait()
+                    _kill_process_group(process)
                     yield f"Error: Command timed out after {timeout} seconds\n"
                     return
                 try:
@@ -219,8 +233,7 @@ async def execute_command(
                         process.stdout.readline(), timeout=remaining
                     )
                 except asyncio.TimeoutError:
-                    process.kill()
-                    await process.wait()
+                    _kill_process_group(process)
                     yield f"Error: Command timed out after {timeout} seconds\n"
                     return
                 if not line:
@@ -234,8 +247,7 @@ async def execute_command(
                     yield decoded
             await process.wait()
         except Exception:
-            process.kill()
-            await process.wait()
+            _kill_process_group(process)
             raise
     except Exception as error:
         yield f"Error: {type(error).__name__}: {error}\n"
