@@ -170,7 +170,7 @@ def test_add_message_with_tool_calls():
     session.add_message("assistant", content=None, tool_calls=tool_calls)
     msg = session.messages[0]
     assert msg["role"] == "assistant"
-    assert "content" not in msg
+    assert msg["content"] is None  # OpenAI API requires content: null with tool_calls
     assert msg["tool_calls"] == tool_calls
 
 

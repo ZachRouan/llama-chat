@@ -324,11 +324,11 @@ async def send_message(state: ChatState, user_input: str) -> str | None:
                     return None
 
                 # Tool calls — add assistant message and execute
-                tool_call_kwargs: dict = {}
-                if stream.content:
-                    tool_call_kwargs["content"] = stream.content
-                tool_call_kwargs["tool_calls"] = stream.tool_calls
-                state.session.add_message("assistant", **tool_call_kwargs)
+                state.session.add_message(
+                    "assistant",
+                    content=stream.content if stream.content else None,
+                    tool_calls=stream.tool_calls,
+                )
 
                 for tool_call in stream.tool_calls:
                     name = tool_call["function"]["name"]
@@ -342,7 +342,7 @@ async def send_message(state: ChatState, user_input: str) -> str | None:
                         result = f"Error: Failed to parse tool arguments: {raw_arguments}"
                         ui.print_tool_call(name, arguments)
                         ui.print_tool_result(name, result)
-                        state.session.add_message("tool", result, tool_call_id=tool_call_id)
+                        state.session.add_message("tool", result, tool_call_id=tool_call_id, name=name)
                         continue
 
                     ui.print_tool_call(name, arguments)
@@ -359,7 +359,7 @@ async def send_message(state: ChatState, user_input: str) -> str | None:
                         result = execute_tool(name, arguments)
 
                     ui.print_tool_result(name, result)
-                    state.session.add_message("tool", result, tool_call_id=tool_call_id)
+                    state.session.add_message("tool", result, tool_call_id=tool_call_id, name=name)
 
                 # Loop continues — next iteration will send updated history
 

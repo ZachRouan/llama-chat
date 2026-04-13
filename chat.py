@@ -47,6 +47,9 @@ class ChatSession:
         message: dict = {"role": role}
         if content is not None:
             message["content"] = content
+        elif "tool_calls" in kwargs:
+            # OpenAI API requires content: null when tool_calls present
+            message["content"] = None
         message.update(kwargs)
         self._messages.append(message)
 

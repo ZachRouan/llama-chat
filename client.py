@@ -105,7 +105,7 @@ class ChatStream:
                         index = tc_chunk["index"]
                         while len(self._tool_calls) <= index:
                             self._tool_calls.append(
-                                {"id": "", "function": {"name": "", "arguments": ""}}
+                                {"id": "", "type": "function", "function": {"name": "", "arguments": ""}}
                             )
                         tc = self._tool_calls[index]
                         if "id" in tc_chunk:
