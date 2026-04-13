@@ -1,4 +1,4 @@
 #!/usr/bin/env bash
-cd "$(dirname "$0")"
-source .venv/bin/activate
-python main.py
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/.venv/bin/activate"
+python "$SCRIPT_DIR/main.py"
