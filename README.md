@@ -10,6 +10,8 @@ A lightweight terminal chat application for local LLMs running via [llama.cpp](h
 - **Multi-model support** with per-server context length configuration
 - **Session persistence** with automatic save/resume
 - **Auto-detection** of model context length via `/props`
+- **Coding agent mode** with tool use (read/write files, run commands, search)
+- **Per-directory permissions** with yes/no/always approval for tool calls
 
 ## Prerequisites
 
@@ -37,6 +39,14 @@ pip install -r requirements.txt
 ```
 
 On first run, an interactive setup will detect running servers and walk you through configuration.
+
+### 3. (Optional) Install globally
+
+```bash
+ln -s "$(pwd)/llama-chat.sh" ~/.local/bin/llama-chat
+```
+
+Then run `llama-chat` from any directory. The agent's tools will operate relative to your current working directory — the same way other terminal coding agents do.
 
 ## Configuration
 

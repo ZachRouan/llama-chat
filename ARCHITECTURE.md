@@ -147,7 +147,7 @@ llama-chat/
 ├── tools.py             # Agent tool definitions and executors
 ├── permissions.py       # Agent tool permissions (per-directory)
 ├── config.py            # Config loading, first-run setup
-├── llama-chat.sh        # Launch script (activates venv)
+├── llama-chat.sh        # Launch script (symlink to ~/.local/bin/llama-chat)
 ├── requirements.txt     # httpx, rich, python-dotenv
 ├── tests/               # pytest tests
 │   ├── test_chat.py
@@ -166,6 +166,7 @@ llama-chat/
 | `~/.config/llama-chat/.env` | Configuration file |
 | `~/.local/share/llama-chat/session.json` | Current session |
 | `~/.local/share/llama-chat/history/` | Archived conversations |
+| `./.local-chat-llm-permissions` | Per-directory agent tool permissions |
 
 ## API Endpoints
 
