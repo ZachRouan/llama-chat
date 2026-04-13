@@ -1,0 +1,121 @@
+# chat.py
+"""Chat session management — message history, context window, persistence."""
+
+from __future__ import annotations
+
+import json
+from datetime import datetime, timezone
+from pathlib import Path
+
+
+class ChatSession:
+    """Manages conversation message history and context window."""
+
+    def __init__(self, system_prompt: str, context_length: int, max_tokens: int):
+        self._system_prompt = system_prompt
+        self._context_length = context_length
+        self._max_tokens = max_tokens
+        self._messages: list[dict[str, str]] = []
+        self._started_at = datetime.now(timezone.utc)
+
+    @property
+    def system_prompt(self) -> str:
+        return self._system_prompt
+
+    @property
+    def messages(self) -> list[dict[str, str]]:
+        return list(self._messages)
+
+    def is_empty(self) -> bool:
+        return len(self._messages) == 0
+
+    def add_message(self, role: str, content: str) -> None:
+        self._messages.append({"role": role, "content": content})
+
+    def remove_last_message(self) -> dict[str, str] | None:
+        if self._messages:
+            return self._messages.pop()
+        return None
+
+    def get_messages_for_api(self) -> list[dict[str, str]]:
+        """Prepend system prompt to conversation messages."""
+        return [{"role": "system", "content": self._system_prompt}] + list(self._messages)
+
+    def set_system_prompt(self, prompt: str) -> None:
+        self._system_prompt = prompt
+
+    def clear(self) -> list[dict[str, str]]:
+        old = self._messages
+        self._messages = []
+        return old
+
+    def estimate_tokens(self) -> int:
+        """Estimate total token count using chars/4 approximation."""
+        total_chars = len(self._system_prompt)
+        for msg in self._messages:
+            total_chars += len(msg["content"])
+        return total_chars // 4
+
+    def truncate_if_needed(self) -> int:
+        """Drop oldest message pairs until conversation fits in context."""
+        pairs_dropped = 0
+        while (
+            self.estimate_tokens() + self._max_tokens > self._context_length
+            and len(self._messages) >= 2
+        ):
+            self._messages.pop(0)
+            self._messages.pop(0)
+            pairs_dropped += 1
+        return pairs_dropped
+
+    def save(self, path: Path, server: str, model: str) -> None:
+        """Save session to a JSON file."""
+        now = datetime.now(timezone.utc)
+        data = {
+            "server": server,
+            "model": model,
+            "system_prompt": self._system_prompt,
+            "context_length": self._context_length,
+            "started_at": self._started_at.strftime("%Y-%m-%dT%H:%M:%S.") + f"{self._started_at.microsecond // 1000:03d}Z",
+            "updated_at": now.strftime("%Y-%m-%dT%H:%M:%S.") + f"{now.microsecond // 1000:03d}Z",
+            "messages": list(self._messages),
+        }
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(data, indent=2) + "\n")
+
+    @classmethod
+    def load(cls, path: Path, max_tokens: int) -> tuple[ChatSession, dict]:
+        """Load a session from JSON. Returns (session, metadata_dict)."""
+        data = json.loads(path.read_text())
+        session = cls(
+            system_prompt=data["system_prompt"],
+            context_length=data["context_length"],
+            max_tokens=max_tokens,
+        )
+        session._messages = list(data["messages"])
+        session._started_at = datetime.fromisoformat(
+            data["started_at"].replace("Z", "+00:00")
+        )
+        meta = {
+            "server": data["server"],
+            "model": data["model"],
+            "system_prompt": data["system_prompt"],
+            "context_length": data["context_length"],
+            "started_at": data["started_at"],
+        }
+        return session, meta
+
+    @staticmethod
+    def archive(session_path: Path, history_dir: Path) -> None:
+        """Move session file to history/ with timestamped filename."""
+        if not session_path.exists():
+            return
+        data = json.loads(session_path.read_text())
+        updated = data.get(
+            "updated_at",
+            datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z"),
+        )
+        stem = updated.rstrip("Z").replace(":", "-").replace(".", "-")
+        filename = f"{stem}.json"
+        history_dir.mkdir(parents=True, exist_ok=True)
+        session_path.rename(history_dir / filename)
