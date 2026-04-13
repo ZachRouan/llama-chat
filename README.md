@@ -59,6 +59,7 @@ Config is stored at `~/.config/llama-chat/.env`. Edit directly or delete to re-r
 | `/system <prompt>` | Change system prompt |
 | `/model` | Switch model |
 | `/agent` | Toggle coding agent mode |
+| `/permissions` | Show or manage tool permission rules |
 | `/quit` | Save and exit |
 
 **Keyboard shortcuts:** Ctrl+C during generation cancels it. Double Ctrl+C at the prompt exits.
@@ -79,6 +80,17 @@ If a response hits the max token limit, a warning is shown.
 Type `/agent` to toggle agent mode. In this mode, the model can use tools to read files, write files, run shell commands, list directories, and search files. The model loops — calling tools and processing results — until it responds with plain text.
 
 Command output streams to your terminal in real time. The agent is capped at 15 tool iterations per message.
+
+## Permissions
+
+When agent mode is active, `write_file` and `run_command` tools require your approval before executing. A permissions file (`.local-chat-llm-permissions`) is auto-created in your working directory.
+
+When prompted, you can respond:
+- **(y)es** — allow this once
+- **(n)o** — deny (the model sees "User denied this tool call" and adjusts)
+- **(a)lways** — add a permanent rule for this pattern
+
+Manage rules with `/permissions`, `/permissions clear`, or `/permissions remove <n>`.
 
 ## Data
 

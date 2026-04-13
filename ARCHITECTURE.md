@@ -85,6 +85,12 @@ Coding agent tool definitions and executors:
 - `execute_tool` — sync dispatch for read_file, write_file, list_directory, search_files
 - `execute_command` — async generator streaming command output with 60s timeout
 
+### permissions.py
+Per-directory tool permission management:
+- `load_permissions` — reads/creates `.local-chat-llm-permissions` JSON file
+- `check_permission` — checks tool defaults and allow rules
+- `add_allow_rule` / `remove_allow_rule` / `clear_allow_rules` — rule management
+
 ### config.py
 Configuration loading:
 - Parse `.env` file and environment variables
@@ -139,6 +145,7 @@ llama-chat/
 ├── chat.py              # ChatSession, message history, persistence
 ├── ui.py                # Terminal UI (rich), spinners, streaming
 ├── tools.py             # Agent tool definitions and executors
+├── permissions.py       # Agent tool permissions (per-directory)
 ├── config.py            # Config loading, first-run setup
 ├── llama-chat.sh        # Launch script (activates venv)
 ├── requirements.txt     # httpx, rich, python-dotenv
@@ -146,6 +153,7 @@ llama-chat/
 │   ├── test_chat.py
 │   ├── test_client.py
 │   ├── test_config.py
+│   ├── test_permissions.py
 │   └── test_tools.py
 └── docs/
     └── *.md             # Design documents
