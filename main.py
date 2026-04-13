@@ -7,6 +7,7 @@ import asyncio
 import os
 import signal
 import sys
+import termios
 import time
 from dataclasses import dataclass, field
 
@@ -217,6 +218,31 @@ async def _queue_updater(
         elapsed = time.monotonic() - started
         spinner.set_queued(server, elapsed)
         await asyncio.sleep(1)
+
+
+# ---------------------------------------------------------------------------
+# Terminal state
+# ---------------------------------------------------------------------------
+
+_saved_terminal_attrs: list | None = None
+
+
+def _save_terminal() -> None:
+    """Save terminal attributes so they can be restored on abrupt exit."""
+    global _saved_terminal_attrs
+    try:
+        _saved_terminal_attrs = termios.tcgetattr(sys.stdin.fileno())
+    except (termios.error, ValueError, OSError):
+        pass
+
+
+def _restore_terminal() -> None:
+    """Restore terminal attributes (echo, canonical mode, etc.)."""
+    if _saved_terminal_attrs is not None:
+        try:
+            termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, _saved_terminal_attrs)
+        except (termios.error, ValueError, OSError):
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -488,6 +514,7 @@ async def handle_command(cmd: str, args: str, state: ChatState) -> bool:
 
 async def chat_loop(state: ChatState) -> None:
     """Main chat loop with signal handling."""
+    _save_terminal()
     loop = asyncio.get_running_loop()
     generation_task: asyncio.Task | None = None
     last_sigint: float = 0.0
@@ -504,6 +531,7 @@ async def chat_loop(state: ChatState) -> None:
         # At prompt: double-press within 3 seconds
         if now - last_sigint < 3.0:
             _save_session(state)
+            _restore_terminal()
             sys.stdout.write("\nSession saved. Goodbye!\n")
             sys.stdout.flush()
             os._exit(0)
