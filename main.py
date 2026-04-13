@@ -226,6 +226,18 @@ async def _queue_updater(
 MAX_TOOL_ITERATIONS = 15
 
 
+def _build_api_messages(state: ChatState) -> list[dict]:
+    """Build API messages, prepending agent system prompt if agent mode is on."""
+    messages = state.session.get_messages_for_api()
+    if state.agent_mode:
+        messages = list(messages)
+        messages[0] = {
+            "role": "system",
+            "content": AGENT_SYSTEM_PROMPT + "\n\n" + messages[0]["content"],
+        }
+    return messages
+
+
 async def send_message(state: ChatState, user_input: str) -> str | None:
     """Send a message and stream the response.
 
@@ -234,6 +246,7 @@ async def send_message(state: ChatState, user_input: str) -> str | None:
 
     Returns None on success, or a prefill string if cancelled/failed.
     """
+    message_count_before = state.session.message_count
     state.session.add_message("user", user_input)
 
     try:
@@ -251,26 +264,14 @@ async def send_message(state: ChatState, user_input: str) -> str | None:
                 )
 
                 # Build messages with agent system prompt if needed
-                messages = state.session.get_messages_for_api()
-                if state.agent_mode:
-                    messages = list(messages)  # copy
-                    messages[0] = {
-                        "role": "system",
-                        "content": AGENT_SYSTEM_PROMPT + "\n\n" + messages[0]["content"],
-                    }
+                messages = _build_api_messages(state)
 
                 # Count tokens and truncate if needed
                 prompt_tokens = await state.client.count_messages_tokens(messages)
                 pairs_dropped = state.session.truncate_if_needed(prompt_tokens)
 
                 if pairs_dropped > 0:
-                    messages = state.session.get_messages_for_api()
-                    if state.agent_mode:
-                        messages = list(messages)
-                        messages[0] = {
-                            "role": "system",
-                            "content": AGENT_SYSTEM_PROMPT + "\n\n" + messages[0]["content"],
-                        }
+                    messages = _build_api_messages(state)
                     prompt_tokens = await state.client.count_messages_tokens(messages)
 
                 stream = await state.client.stream_chat(
@@ -367,7 +368,7 @@ async def send_message(state: ChatState, user_input: str) -> str | None:
                     queue_task.cancel()
                 spinner.stop()
                 stream_display.stop()
-                state.session.remove_last_message()
+                state.session.rollback_to(message_count_before)
                 return user_input
 
             except (httpx.ConnectError, httpx.ConnectTimeout) as error:
@@ -375,7 +376,7 @@ async def send_message(state: ChatState, user_input: str) -> str | None:
                     queue_task.cancel()
                 spinner.stop()
                 stream_display.stop()
-                state.session.remove_last_message()
+                state.session.rollback_to(message_count_before)
                 ui.print_error(f"Connection failed: {error}")
                 return user_input
 
@@ -384,7 +385,7 @@ async def send_message(state: ChatState, user_input: str) -> str | None:
                     queue_task.cancel()
                 spinner.stop()
                 stream_display.stop()
-                state.session.remove_last_message()
+                state.session.rollback_to(message_count_before)
                 ui.print_error(f"Server error: {error.response.status_code}")
                 return user_input
 
@@ -400,7 +401,7 @@ async def send_message(state: ChatState, user_input: str) -> str | None:
 
     except asyncio.CancelledError:
         # Outer cancellation (e.g., during tool execution)
-        state.session.remove_last_message()
+        state.session.rollback_to(message_count_before)
         return user_input
 
 

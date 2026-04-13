@@ -29,6 +29,14 @@ class ChatSession:
     def is_empty(self) -> bool:
         return len(self._messages) == 0
 
+    @property
+    def message_count(self) -> int:
+        return len(self._messages)
+
+    def rollback_to(self, count: int) -> None:
+        """Remove all messages after position `count`."""
+        self._messages = self._messages[:count]
+
     def add_message(self, role: str, content: str | None = None, **kwargs) -> None:
         """Add a message to history.
 
