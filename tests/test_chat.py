@@ -162,3 +162,91 @@ def test_archive_nonexistent_is_noop(tmp_path):
     history_dir = tmp_path / "history"
     ChatSession.archive(session_path, history_dir)
     assert not history_dir.exists()
+
+
+def test_add_message_with_tool_calls():
+    session = ChatSession("system", 4096, 2048)
+    tool_calls = [{"id": "call_1", "function": {"name": "read_file", "arguments": '{"path": "/tmp"}'}}]
+    session.add_message("assistant", content=None, tool_calls=tool_calls)
+    msg = session.messages[0]
+    assert msg["role"] == "assistant"
+    assert "content" not in msg
+    assert msg["tool_calls"] == tool_calls
+
+
+def test_add_message_with_tool_result():
+    session = ChatSession("system", 4096, 2048)
+    session.add_message("tool", "file contents here", tool_call_id="call_1")
+    msg = session.messages[0]
+    assert msg["role"] == "tool"
+    assert msg["content"] == "file contents here"
+    assert msg["tool_call_id"] == "call_1"
+
+
+def test_get_messages_for_api_includes_tool_messages():
+    session = ChatSession("system", 4096, 2048)
+    session.add_message("user", "read /tmp/test")
+    session.add_message("assistant", content=None, tool_calls=[{"id": "c1", "function": {"name": "read_file", "arguments": "{}"}}])
+    session.add_message("tool", "file contents", tool_call_id="c1")
+    session.add_message("assistant", "Here's what I found.")
+    msgs = session.get_messages_for_api()
+    assert len(msgs) == 5  # system + 4 messages
+    assert msgs[2]["role"] == "assistant"
+    assert msgs[2].get("tool_calls") is not None
+    assert msgs[3]["role"] == "tool"
+    assert msgs[3]["tool_call_id"] == "c1"
+
+
+def test_estimate_tokens_with_none_content():
+    session = ChatSession("system", 4096, 2048)
+    session.add_message("assistant", content=None, tool_calls=[{"id": "c1", "function": {"name": "read_file", "arguments": '{"path": "/tmp"}'}}])
+    # Should not raise
+    estimate = session.estimate_tokens()
+    assert estimate > 0
+
+
+def test_truncate_drops_complete_tool_turns():
+    """Truncation drops entire turns including tool call/result sequences."""
+    session = ChatSession("sys", 120, 50)
+    # Turn 1: user + assistant(tool_call) + tool + assistant(text)
+    session.add_message("user", "x" * 80)
+    session.add_message("assistant", content=None, tool_calls=[{"id": "c1", "function": {"name": "read_file", "arguments": '{"path": "/tmp"}'}}])
+    session.add_message("tool", "y" * 80, tool_call_id="c1")
+    session.add_message("assistant", "z" * 80)
+    # Turn 2: user + assistant
+    session.add_message("user", "a" * 40)
+    session.add_message("assistant", "b" * 40)
+
+    dropped = session.truncate_if_needed()
+    assert dropped > 0
+    # First remaining message should be "user" (start of turn 2)
+    assert session.messages[0]["role"] == "user"
+    assert session.messages[0]["content"] == "a" * 40
+
+
+def test_truncate_does_not_orphan_tool_results():
+    """After truncation, no tool result should appear without its tool call."""
+    session = ChatSession("sys", 300, 50)
+    # Turn 1 with tool calls
+    session.add_message("user", "x" * 100)
+    session.add_message("assistant", content=None, tool_calls=[{"id": "c1", "function": {"name": "read_file", "arguments": "{}"}}])
+    session.add_message("tool", "y" * 100, tool_call_id="c1")
+    session.add_message("assistant", "done")
+    # Turn 2
+    session.add_message("user", "short")
+    session.add_message("assistant", "ok")
+
+    session.truncate_if_needed()
+    # Check: no "tool" message appears before an assistant message with tool_calls
+    roles = [m["role"] for m in session.messages]
+    for i, role in enumerate(roles):
+        if role == "tool":
+            # There must be an assistant with tool_calls before this
+            found = False
+            for j in range(i - 1, -1, -1):
+                if session.messages[j]["role"] == "assistant" and "tool_calls" in session.messages[j]:
+                    found = True
+                    break
+                if session.messages[j]["role"] == "user":
+                    break
+            assert found, f"Orphaned tool result at index {i}"

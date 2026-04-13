@@ -15,7 +15,7 @@ class ChatSession:
         self._system_prompt = system_prompt
         self._context_length = context_length
         self._max_tokens = max_tokens
-        self._messages: list[dict[str, str]] = []
+        self._messages: list[dict] = []
         self._started_at = datetime.now(timezone.utc)
 
     @property
@@ -23,21 +23,31 @@ class ChatSession:
         return self._system_prompt
 
     @property
-    def messages(self) -> list[dict[str, str]]:
+    def messages(self) -> list[dict]:
         return list(self._messages)
 
     def is_empty(self) -> bool:
         return len(self._messages) == 0
 
-    def add_message(self, role: str, content: str) -> None:
-        self._messages.append({"role": role, "content": content})
+    def add_message(self, role: str, content: str | None = None, **kwargs) -> None:
+        """Add a message to history.
 
-    def remove_last_message(self) -> dict[str, str] | None:
+        For regular messages: add_message("user", "hello")
+        For tool calls: add_message("assistant", content=None, tool_calls=[...])
+        For tool results: add_message("tool", "result text", tool_call_id="abc123")
+        """
+        message: dict = {"role": role}
+        if content is not None:
+            message["content"] = content
+        message.update(kwargs)
+        self._messages.append(message)
+
+    def remove_last_message(self) -> dict | None:
         if self._messages:
             return self._messages.pop()
         return None
 
-    def get_messages_for_api(self) -> list[dict[str, str]]:
+    def get_messages_for_api(self) -> list[dict]:
         """Prepend system prompt to conversation messages."""
         return [{"role": "system", "content": self._system_prompt}] + list(self._messages)
 
@@ -48,7 +58,7 @@ class ChatSession:
         """Update the context window size (e.g., after switching models)."""
         self._context_length = length
 
-    def clear(self) -> list[dict[str, str]]:
+    def clear(self) -> list[dict]:
         old = self._messages
         self._messages = []
         return old
@@ -56,33 +66,48 @@ class ChatSession:
     def estimate_tokens(self) -> int:
         """Estimate total token count using chars/4 approximation."""
         total_chars = len(self._system_prompt)
-        for msg in self._messages:
-            total_chars += len(msg["content"])
+        for message in self._messages:
+            content = message.get("content") or ""
+            total_chars += len(str(content))
+            if "tool_calls" in message:
+                total_chars += len(json.dumps(message["tool_calls"]))
         return total_chars // 4
 
     def truncate_if_needed(self, token_count: int | None = None) -> int:
-        """Drop oldest message pairs until conversation fits in context.
+        """Drop oldest complete turns until conversation fits in context.
 
-        Args:
-            token_count: Accurate token count if available. Falls back to
-                         estimation if None.
+        A turn starts at a "user" message and includes everything up to
+        (but not including) the next "user" message. This prevents orphaning
+        tool call/result sequences.
         """
-        pairs_dropped = 0
+        turns_dropped = 0
         current_tokens = token_count if token_count is not None else self.estimate_tokens()
 
         while (
             current_tokens + self._max_tokens > self._context_length
             and len(self._messages) >= 2
         ):
-            # Remove oldest pair
-            removed1 = self._messages.pop(0)
-            removed2 = self._messages.pop(0)
-            pairs_dropped += 1
-            # Estimate tokens removed (chars/4 for the removed messages)
-            removed_tokens = (len(removed1["content"]) + len(removed2["content"])) // 4
-            current_tokens -= removed_tokens
+            # Find the start of the second turn
+            next_turn = 1
+            while next_turn < len(self._messages) and self._messages[next_turn]["role"] != "user":
+                next_turn += 1
 
-        return pairs_dropped
+            if next_turn >= len(self._messages):
+                break  # only one turn left
+
+            removed = self._messages[:next_turn]
+            self._messages = self._messages[next_turn:]
+            turns_dropped += 1
+
+            removed_chars = 0
+            for message in removed:
+                content = message.get("content") or ""
+                removed_chars += len(str(content))
+                if "tool_calls" in message:
+                    removed_chars += len(json.dumps(message["tool_calls"]))
+            current_tokens -= removed_chars // 4
+
+        return turns_dropped
 
     def save(self, path: Path, server: str, model: str) -> None:
         """Save session to a JSON file."""

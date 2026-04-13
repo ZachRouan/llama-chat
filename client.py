@@ -203,17 +203,19 @@ class LlamaClient:
         data = response.json()
         return len(data.get("tokens", []))
 
-    async def count_messages_tokens(self, messages: list[dict[str, str]]) -> int:
+    async def count_messages_tokens(self, messages: list[dict]) -> int:
         """Count tokens in a list of chat messages.
 
         Concatenates message contents with role prefixes for a reasonable estimate.
         Note: This won't exactly match the chat template, but is close.
         """
         parts = []
-        for msg in messages:
-            role = msg.get("role", "")
-            content = msg.get("content", "")
+        for message in messages:
+            role = message.get("role", "")
+            content = message.get("content") or ""
             parts.append(f"{role}: {content}")
+            if "tool_calls" in message:
+                parts.append(json.dumps(message["tool_calls"]))
         text = "\n".join(parts)
         return await self.count_tokens(text)
 
