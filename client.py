@@ -1,0 +1,175 @@
+# client.py
+"""LLM client — HTTP communication with llama.cpp's OpenAI-compatible API."""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import time
+from dataclasses import dataclass
+from enum import Enum
+from typing import AsyncGenerator
+
+import httpx
+
+
+class ServerStatus(Enum):
+    ONLINE = "online"
+    LOADING = "loading"
+    OFFLINE = "offline"
+
+
+@dataclass
+class ModelInfo:
+    id: str
+    server: str  # "host:port"
+
+
+class ChatStream:
+    """Async iterator over an SSE stream. Yields content token strings."""
+
+    def __init__(self, response: httpx.Response):
+        self._response = response
+        self.content: str = ""
+        self.token_count: int = 0
+        self.first_token_time: float | None = None
+        self.last_token_time: float | None = None
+        self.was_interrupted: bool = False
+        self._usage_tokens: int | None = None
+
+    @property
+    def is_empty(self) -> bool:
+        return self.token_count == 0
+
+    @property
+    def duration(self) -> float:
+        if self.first_token_time is not None and self.last_token_time is not None:
+            return self.last_token_time - self.first_token_time
+        return 0.0
+
+    @property
+    def final_token_count(self) -> int:
+        if self._usage_tokens is not None:
+            return self._usage_tokens
+        return self.token_count
+
+    async def __aiter__(self) -> AsyncGenerator[str, None]:
+        try:
+            async for line in self._response.aiter_lines():
+                line = line.strip()
+                if not line or not line.startswith("data: "):
+                    continue
+                data = line[6:]
+                if data == "[DONE]":
+                    break
+                try:
+                    chunk = json.loads(data)
+                except json.JSONDecodeError:
+                    continue
+                choices = chunk.get("choices", [])
+                if not choices:
+                    continue
+                delta = choices[0].get("delta", {})
+                content = delta.get("content")
+                usage = chunk.get("usage")
+                if usage and "completion_tokens" in usage:
+                    self._usage_tokens = usage["completion_tokens"]
+                if content:
+                    now = time.monotonic()
+                    if self.first_token_time is None:
+                        self.first_token_time = now
+                    self.last_token_time = now
+                    self.token_count += 1
+                    self.content += content
+                    yield content
+        except (httpx.StreamError, httpx.RemoteProtocolError):
+            self.was_interrupted = True
+        finally:
+            await self._response.aclose()
+
+
+class LlamaClient:
+    """Async client for llama.cpp's OpenAI-compatible API."""
+
+    _RETRY_DELAYS = [1, 2, 4]
+    _MAX_RETRIES = 3
+
+    def __init__(self, host: str, port: int, *, http_client: httpx.AsyncClient | None = None):
+        self.host = host
+        self.port = port
+        self.base_url = f"http://{host}:{port}"
+        self._http = http_client or httpx.AsyncClient(
+            base_url=self.base_url,
+            timeout=httpx.Timeout(connect=10.0, read=None, write=None, pool=None),
+        )
+        self._owns_client = http_client is None
+
+    @property
+    def server(self) -> str:
+        return f"{self.host}:{self.port}"
+
+    async def check_health(self) -> ServerStatus:
+        """Check server health. Returns ONLINE, LOADING, or OFFLINE."""
+        try:
+            response = await self._http.get("/health")
+            if response.status_code == 200:
+                return ServerStatus.ONLINE
+            elif response.status_code == 503:
+                return ServerStatus.LOADING
+            else:
+                return ServerStatus.OFFLINE
+        except (httpx.ConnectError, httpx.ConnectTimeout):
+            return ServerStatus.OFFLINE
+
+    async def get_models(self) -> list[ModelInfo]:
+        """Fetch the list of models currently loaded on this server."""
+        response = await self._http.get("/v1/models")
+        response.raise_for_status()
+        data = response.json()
+        return [ModelInfo(id=m["id"], server=self.server) for m in data.get("data", [])]
+
+    async def get_context_length(self) -> int | None:
+        """Auto-detect context length via /props. Returns None if unavailable."""
+        try:
+            response = await self._http.get("/props")
+            response.raise_for_status()
+            data = response.json()
+            n_ctx = data.get("default_generation_settings", {}).get("n_ctx")
+            return int(n_ctx) if n_ctx is not None else None
+        except (httpx.HTTPError, ValueError, KeyError, TypeError):
+            return None
+
+    async def stream_chat(
+        self,
+        messages: list[dict[str, str]],
+        temperature: float,
+        max_tokens: int,
+    ) -> ChatStream:
+        """Start a streaming chat completion. Retries connection errors up to _MAX_RETRIES times."""
+        body = {
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "stream": True,
+        }
+        last_error: Exception | None = None
+
+        for attempt in range(1 + self._MAX_RETRIES):
+            try:
+                request = self._http.build_request("POST", "/v1/chat/completions", json=body)
+                response = await self._http.send(request, stream=True)
+                response.raise_for_status()
+                return ChatStream(response)
+            except (httpx.ConnectError, httpx.ConnectTimeout) as e:
+                last_error = e
+                if attempt < self._MAX_RETRIES:
+                    await asyncio.sleep(self._RETRY_DELAYS[attempt])
+            except httpx.HTTPStatusError:
+                raise
+
+        raise last_error  # type: ignore[misc]
+
+    async def close(self) -> None:
+        """Close the underlying HTTP client if we own it."""
+        if self._owns_client:
+            await self._http.aclose()
