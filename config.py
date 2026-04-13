@@ -87,24 +87,77 @@ def load_config() -> AppConfig:
     )
 
 
+def _prompt_servers_manually() -> list[str]:
+    """Prompt user to enter server addresses one at a time."""
+    servers: list[str] = []
+    print("  Enter server addresses (host:port). Empty line to finish.\n")
+    i = 1
+    while True:
+        entry = input(f"  Server {i}: ").strip()
+        if not entry:
+            if servers:
+                break
+            print("  At least one server is required.")
+            continue
+        servers.append(entry)
+        i += 1
+    return servers
+
+
+def _probe_server(host: str, port: int) -> str | None:
+    """Probe a server for its model name. Returns model ID or None."""
+    import httpx
+
+    try:
+        resp = httpx.get(f"http://{host}:{port}/v1/models", timeout=3)
+        if resp.status_code == 200:
+            data = resp.json()
+            models = data.get("data", [])
+            if models:
+                return models[0]["id"]
+    except (httpx.ConnectError, httpx.ConnectTimeout, Exception):
+        pass
+    return None
+
+
 def run_first_time_setup() -> AppConfig:
     """Interactive first-run setup. Uses plain input()/print() — no rich.
 
-    Prompts the user for server addresses and settings, writes a .env file
-    to CONFIG_DIR, then returns the resulting AppConfig.
+    Probes default servers to show what's running, then lets the user
+    confirm or manually configure.
     """
     print("Welcome to llama-chat! Let's set up your configuration.\n")
 
-    # Collect servers
-    servers_list: list[str] = []
-    print("Enter your llama.cpp server addresses (host:port).")
-    print("Press Enter to accept the default for the first two.\n")
+    # Probe default servers
+    defaults = [("localhost", 8082), ("localhost", 8081)]
+    print("Scanning for llama.cpp servers...\n")
 
-    defaults = ["localhost:8082", "localhost:8081"]
-    for i, default in enumerate(defaults):
-        entry = input(f"  Server {i + 1} [{default}]: ").strip()
-        servers_list.append(entry if entry else default)
+    detected: list[tuple[str, int, str | None]] = []
+    for host, port in defaults:
+        model = _probe_server(host, port)
+        detected.append((host, port, model))
 
+    # Show what we found
+    any_online = any(m is not None for _, _, m in detected)
+    if any_online:
+        print("  Detected servers:")
+        for host, port, model in detected:
+            if model:
+                print(f"    {model} on {host}:{port}")
+            else:
+                print(f"    {host}:{port} (offline)")
+
+        use_detected = input("\n  Use these servers? (y/n) [y]: ").strip().lower()
+        if use_detected in ("", "y", "yes"):
+            servers_list = [f"{h}:{p}" for h, p, _ in detected]
+        else:
+            servers_list = _prompt_servers_manually()
+    else:
+        print("  No servers detected on default ports (8082, 8081).")
+        print("  Enter your server addresses manually.\n")
+        servers_list = _prompt_servers_manually()
+
+    # Allow adding more
     while True:
         more = input("  Add another server? (y/n) [n]: ").strip().lower()
         if more in ("y", "yes"):
