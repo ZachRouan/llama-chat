@@ -37,6 +37,7 @@ class ChatStream:
         self.was_interrupted: bool = False
         self.finish_reason: str | None = None
         self._usage_tokens: int | None = None
+        self._prompt_tokens: int | None = None
 
     @property
     def is_empty(self) -> bool:
@@ -57,6 +58,13 @@ class ChatStream:
         if self._usage_tokens is not None:
             return self._usage_tokens
         return self.token_count
+
+    @property
+    def total_context_tokens(self) -> int | None:
+        """Total tokens used (prompt + completion). None if unavailable."""
+        if self._prompt_tokens is not None and self._usage_tokens is not None:
+            return self._prompt_tokens + self._usage_tokens
+        return None
 
     async def __aiter__(self) -> AsyncGenerator[str, None]:
         try:
@@ -81,8 +89,11 @@ class ChatStream:
                 if finish_reason:
                     self.finish_reason = finish_reason
                 usage = chunk.get("usage")
-                if usage and "completion_tokens" in usage:
-                    self._usage_tokens = usage["completion_tokens"]
+                if usage:
+                    if "completion_tokens" in usage:
+                        self._usage_tokens = usage["completion_tokens"]
+                    if "prompt_tokens" in usage:
+                        self._prompt_tokens = usage["prompt_tokens"]
                 if content:
                     now = time.monotonic()
                     if self.first_token_time is None:

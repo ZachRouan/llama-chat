@@ -276,7 +276,13 @@ async def send_message(state: ChatState, user_input: str) -> str | None:
 
         # Normal completion
         state.session.add_message("assistant", stream.content)
-        ui.print_stats(stream.final_token_count, stream.duration, stream.hit_max_tokens)
+        ui.print_stats(
+            stream.final_token_count,
+            stream.duration,
+            stream.hit_max_tokens,
+            stream.total_context_tokens,
+            state.context_length,
+        )
         return None
 
     except asyncio.CancelledError:

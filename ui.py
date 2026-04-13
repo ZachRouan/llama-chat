@@ -146,15 +146,28 @@ class StreamingDisplay:
             self._live = None
 
 
-def print_stats(token_count: int, duration: float, truncated: bool = False) -> None:
-    """Display token/s statistics after a response."""
+def print_stats(
+    token_count: int,
+    duration: float,
+    truncated: bool = False,
+    context_used: int | None = None,
+    context_max: int | None = None,
+) -> None:
+    """Display token/s statistics and context usage after a response."""
+    parts = []
     if duration > 0:
         speed = token_count / duration
-        console.print(
-            f"[dim]{token_count} tokens in {duration:.1f}s ({speed:.1f} tok/s)[/dim]"
-        )
+        parts.append(f"{token_count} tokens in {duration:.1f}s ({speed:.1f} tok/s)")
     elif token_count > 0:
-        console.print(f"[dim]{token_count} tokens[/dim]")
+        parts.append(f"{token_count} tokens")
+
+    if context_used is not None and context_max is not None:
+        pct = (context_used / context_max) * 100
+        parts.append(f"context: {context_used:,}/{context_max:,} ({pct:.0f}%)")
+
+    if parts:
+        console.print(f"[dim]{' · '.join(parts)}[/dim]")
+
     if truncated:
         console.print(
             "[yellow](Response truncated — hit max_tokens limit. "
