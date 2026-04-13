@@ -47,7 +47,7 @@ Config is stored at `~/.config/llama-chat/.env`. Edit directly or delete to re-r
 | `LLAMA_SERVERS` | `localhost:8082,localhost:8081` | Comma-separated `host:port` or `host:port:context_length` list |
 | `LLAMA_SYSTEM_PROMPT` | `You are a helpful assistant.` | System prompt |
 | `LLAMA_MAX_TOKENS` | `8192` | Max tokens per response |
-| `LLAMA_TEMPERATURE` | `0.7` | Sampling temperature |
+| `LLAMA_TEMPERATURE` | `1.0` | Sampling temperature |
 | `LLAMA_CONTEXT_LENGTH` | `4096` | Fallback context window size |
 
 ## Commands
@@ -58,6 +58,7 @@ Config is stored at `~/.config/llama-chat/.env`. Edit directly or delete to re-r
 | `/clear` | Clear and archive conversation |
 | `/system <prompt>` | Change system prompt |
 | `/model` | Switch model |
+| `/agent` | Toggle coding agent mode |
 | `/quit` | Save and exit |
 
 **Keyboard shortcuts:** Ctrl+C during generation cancels it. Double Ctrl+C at the prompt exits.
@@ -72,6 +73,12 @@ After each response, you'll see stats like:
 For reasoning models (like Gemma 4), internal thinking is displayed in dim italic before the actual response.
 
 If a response hits the max token limit, a warning is shown.
+
+## Agent Mode
+
+Type `/agent` to toggle agent mode. In this mode, the model can use tools to read files, write files, run shell commands, list directories, and search files. The model loops — calling tools and processing results — until it responds with plain text.
+
+Command output streams to your terminal in real time. The agent is capped at 15 tool iterations per message.
 
 ## Data
 

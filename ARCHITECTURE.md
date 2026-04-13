@@ -49,14 +49,15 @@ Entry point and orchestration. Handles:
 - Async event loop and signal handling
 - Model selection menu with health checks
 - Session resume flow
-- Command dispatch (`/help`, `/clear`, `/model`, `/system`, `/quit`)
+- Command dispatch (`/help`, `/clear`, `/model`, `/system`, `/agent`, `/quit`)
 - Message send with streaming display coordination
+- Agent mode: tool loop with tool call parsing and execution
 - Graceful exit (double Ctrl+C)
 
 ### client.py
 HTTP communication with llama.cpp's OpenAI-compatible API:
 - `LlamaClient` — async client with connection pooling
-- `ChatStream` — SSE parser yielding `(token, is_reasoning)` tuples
+- `ChatStream` — SSE parser yielding `(token, is_reasoning)` tuples, tool call accumulation
 - `ServerStatus` enum — ONLINE, LOADING, OFFLINE
 - Token counting via `/tokenize` endpoint
 - Context length auto-detection via `/props`
@@ -65,7 +66,7 @@ HTTP communication with llama.cpp's OpenAI-compatible API:
 ### chat.py
 Conversation state management:
 - `ChatSession` — message history, system prompt
-- Context window truncation (drops oldest message pairs)
+- Turn-aware context window truncation (drops complete turns including tool sequences)
 - Session persistence to JSON
 - Archive to timestamped history files
 
@@ -75,6 +76,14 @@ Terminal rendering (only module that imports `rich`):
 - `StreamingDisplay` — live markdown rendering, reasoning in dim italic
 - Banner, model menu, stats, error messages
 - Input handling with readline prefill
+- Tool call and result display (dim styling, streaming command output)
+
+### tools.py
+Coding agent tool definitions and executors:
+- `TOOL_DEFINITIONS` — OpenAI-format tool schemas for 5 tools
+- `clean_arguments` — strips Gemma 4 `<|"|>` delimiter tokens
+- `execute_tool` — sync dispatch for read_file, write_file, list_directory, search_files
+- `execute_command` — async generator streaming command output with 60s timeout
 
 ### config.py
 Configuration loading:
@@ -129,13 +138,15 @@ llama-chat/
 ├── client.py            # LlamaClient, ChatStream, API communication
 ├── chat.py              # ChatSession, message history, persistence
 ├── ui.py                # Terminal UI (rich), spinners, streaming
+├── tools.py             # Agent tool definitions and executors
 ├── config.py            # Config loading, first-run setup
 ├── llama-chat.sh        # Launch script (activates venv)
 ├── requirements.txt     # httpx, rich, python-dotenv
 ├── tests/               # pytest tests
 │   ├── test_chat.py
 │   ├── test_client.py
-│   └── test_config.py
+│   ├── test_config.py
+│   └── test_tools.py
 └── docs/
     └── *.md             # Design documents
 ```
