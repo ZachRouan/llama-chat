@@ -247,19 +247,21 @@ def print_tool_call(name: str, arguments: dict) -> None:
     console.print(f"[dim]→ {name}: {summary}[/dim]")
 
 
-def print_tool_result(name: str, result: str, max_display: int = 200) -> None:
+def print_tool_result(name: str, result: str, max_lines: int = 5) -> None:
     """Display a brief tool result in dim style."""
     if result.startswith("Error:"):
-        console.print(f"[red]  ✗ {result}[/red]")
+        console.print(f"[red]  \u2717 {result}[/red]")
     else:
-        lines = result.count("\n")
-        if lines > 5:
-            console.print(f"[dim]  ✓ ({lines} lines)[/dim]")
+        result_lines = result.rstrip("\n").split("\n")
+        total = len(result_lines)
+        if total <= max_lines:
+            for line in result_lines:
+                console.print(f"[dim]  \u2713 {line}[/dim]", highlight=False)
         else:
-            preview = result[:max_display]
-            if len(result) > max_display:
-                preview += "..."
-            console.print(f"[dim]  ✓ {preview}[/dim]")
+            for line in result_lines[:max_lines]:
+                console.print(f"[dim]  \u2713 {line}[/dim]", highlight=False)
+            remaining = total - max_lines
+            console.print(f"[dim]  \u2713 ... ({remaining} more lines)[/dim]")
 
 
 def print_command_output(line: str) -> None:
