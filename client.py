@@ -38,6 +38,7 @@ class ChatStream:
         self.finish_reason: str | None = None
         self._usage_tokens: int | None = None
         self._prompt_tokens: int | None = None
+        self._tool_calls: list[dict] = []
 
     @property
     def is_empty(self) -> bool:
@@ -67,6 +68,14 @@ class ChatStream:
             return self._prompt_tokens + completion
         return None
 
+    @property
+    def has_tool_calls(self) -> bool:
+        return len(self._tool_calls) > 0
+
+    @property
+    def tool_calls(self) -> list[dict]:
+        return list(self._tool_calls)
+
     def set_prompt_tokens(self, count: int) -> None:
         """Set the prompt token count (called before streaming starts)."""
         self._prompt_tokens = count
@@ -89,6 +98,24 @@ class ChatStream:
                     continue
                 choice = choices[0]
                 delta = choice.get("delta", {})
+                # Accumulate tool calls by index
+                tool_call_chunks = delta.get("tool_calls")
+                if tool_call_chunks:
+                    for tc_chunk in tool_call_chunks:
+                        index = tc_chunk["index"]
+                        while len(self._tool_calls) <= index:
+                            self._tool_calls.append(
+                                {"id": "", "function": {"name": "", "arguments": ""}}
+                            )
+                        tc = self._tool_calls[index]
+                        if "id" in tc_chunk:
+                            tc["id"] = tc_chunk["id"]
+                        func = tc_chunk.get("function", {})
+                        if "name" in func:
+                            tc["function"]["name"] = func["name"]
+                        if "arguments" in func:
+                            tc["function"]["arguments"] += func["arguments"]
+                    continue
                 content = delta.get("content")
                 reasoning = delta.get("reasoning_content")
                 finish_reason = choice.get("finish_reason")
@@ -192,17 +219,22 @@ class LlamaClient:
 
     async def stream_chat(
         self,
-        messages: list[dict[str, str]],
+        messages: list[dict],
         temperature: float,
         max_tokens: int,
+        tools: list[dict] | None = None,
     ) -> ChatStream:
         """Start a streaming chat completion. Retries connection errors up to _MAX_RETRIES times."""
-        body = {
+        body: dict = {
             "messages": messages,
             "temperature": temperature,
             "max_tokens": max_tokens,
             "stream": True,
         }
+        if tools:
+            body["tools"] = tools
+            body["tool_choice"] = "auto"
+            body["top_k"] = 64
         last_error: Exception | None = None
 
         for attempt in range(1 + self._MAX_RETRIES):

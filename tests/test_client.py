@@ -204,3 +204,118 @@ async def test_stream_chat_exhausts_retries():
     with pytest.raises(httpx.ConnectError):
         await client.stream_chat([{"role": "user", "content": "hi"}], 0.7, 100)
     await http.aclose()
+
+
+async def test_stream_chat_sends_tools_in_body():
+    """When tools are provided, request body includes tools, tool_choice, and top_k."""
+    captured_body = {}
+
+    def handler(request):
+        captured_body.update(json.loads(request.content))
+        return _sse_response(
+            '{"choices":[{"delta":{"content":"ok"}}]}',
+            "[DONE]",
+        )
+
+    transport = httpx.MockTransport(handler)
+    http = httpx.AsyncClient(transport=transport, base_url="http://localhost:8082")
+    client = LlamaClient("localhost", 8082, http_client=http)
+    tools = [{"type": "function", "function": {"name": "read_file"}}]
+    await client.stream_chat(
+        [{"role": "user", "content": "hi"}],
+        temperature=1.0,
+        max_tokens=100,
+        tools=tools,
+    )
+    assert captured_body["tools"] == tools
+    assert captured_body["tool_choice"] == "auto"
+    assert captured_body["top_k"] == 64
+    await http.aclose()
+
+
+async def test_stream_chat_omits_tools_when_none():
+    """When tools is None, request body has no tools/tool_choice/top_k."""
+    captured_body = {}
+
+    def handler(request):
+        captured_body.update(json.loads(request.content))
+        return _sse_response(
+            '{"choices":[{"delta":{"content":"ok"}}]}',
+            "[DONE]",
+        )
+
+    transport = httpx.MockTransport(handler)
+    http = httpx.AsyncClient(transport=transport, base_url="http://localhost:8082")
+    client = LlamaClient("localhost", 8082, http_client=http)
+    await client.stream_chat(
+        [{"role": "user", "content": "hi"}],
+        temperature=0.7,
+        max_tokens=100,
+    )
+    assert "tools" not in captured_body
+    assert "tool_choice" not in captured_body
+    assert "top_k" not in captured_body
+    await http.aclose()
+
+
+async def test_chatstream_accumulates_tool_calls():
+    """Tool call chunks are accumulated by index across SSE events."""
+    response = _sse_response(
+        '{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"read_file","arguments":""}}]}}]}',
+        '{"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\\"pa"}}]}}]}',
+        '{"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"th\\": \\"/tmp/test\\"}"}}]}}]}',
+        '{"choices":[{"delta":{},"finish_reason":"tool_calls"}]}',
+        "[DONE]",
+    )
+    stream = ChatStream(response)
+    tokens = [t async for t in stream]
+    assert tokens == []  # no content tokens for tool calls
+    assert stream.has_tool_calls
+    assert len(stream.tool_calls) == 1
+    tc = stream.tool_calls[0]
+    assert tc["id"] == "call_1"
+    assert tc["function"]["name"] == "read_file"
+    assert json.loads(tc["function"]["arguments"]) == {"path": "/tmp/test"}
+
+
+async def test_chatstream_no_tool_calls_for_text():
+    """Normal text responses have no tool calls."""
+    response = _sse_response(
+        '{"choices":[{"delta":{"content":"Hello"}}]}',
+        '{"choices":[{"delta":{},"finish_reason":"stop"}]}',
+        "[DONE]",
+    )
+    stream = ChatStream(response)
+    tokens = [t async for t in stream]
+    assert tokens == [("Hello", False)]
+    assert not stream.has_tool_calls
+    assert stream.tool_calls == []
+
+
+async def test_chatstream_finish_reason_tool():
+    """Handle finish_reason 'tool' (alternate llama.cpp value)."""
+    response = _sse_response(
+        '{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"read_file","arguments":"{\\"path\\": \\"/tmp\\"}"}}]}}]}',
+        '{"choices":[{"delta":{},"finish_reason":"tool"}]}',
+        "[DONE]",
+    )
+    stream = ChatStream(response)
+    _ = [t async for t in stream]
+    assert stream.has_tool_calls
+    assert stream.finish_reason in ("tool_calls", "tool")
+
+
+async def test_chatstream_multiple_tool_calls():
+    """Multiple tool calls accumulated by different indices."""
+    response = _sse_response(
+        '{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"read_file","arguments":"{\\"path\\": \\"/a\\"}"}}]}}]}',
+        '{"choices":[{"delta":{"tool_calls":[{"index":1,"id":"call_2","type":"function","function":{"name":"read_file","arguments":"{\\"path\\": \\"/b\\"}"}}]}}]}',
+        '{"choices":[{"delta":{},"finish_reason":"tool_calls"}]}',
+        "[DONE]",
+    )
+    stream = ChatStream(response)
+    _ = [t async for t in stream]
+    assert stream.has_tool_calls
+    assert len(stream.tool_calls) == 2
+    assert stream.tool_calls[0]["id"] == "call_1"
+    assert stream.tool_calls[1]["id"] == "call_2"
