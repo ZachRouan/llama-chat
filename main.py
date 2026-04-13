@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import signal
 import sys
 import time
@@ -413,8 +414,7 @@ async def chat_loop(state: ChatState) -> None:
             _save_session(state)
             sys.stdout.write("\nSession saved. Goodbye!\n")
             sys.stdout.flush()
-            loop.stop()
-            return
+            os._exit(0)
 
         last_sigint = now
         sys.stdout.write("\nPress Ctrl+C again to quit.\n")
