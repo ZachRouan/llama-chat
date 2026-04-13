@@ -4,7 +4,10 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import subprocess
+from pathlib import Path
 
 
 MAX_OUTPUT_CHARS = 50_000
@@ -92,6 +95,81 @@ TOOL_DEFINITIONS: list[dict] = [
         },
     },
 ]
+
+
+def _truncate(text: str) -> str:
+    """Truncate output to MAX_OUTPUT_CHARS with a suffix."""
+    if len(text) > MAX_OUTPUT_CHARS:
+        return text[:MAX_OUTPUT_CHARS] + "\n[truncated]"
+    return text
+
+
+def _read_file(arguments: dict) -> str:
+    path = arguments["path"]
+    content = Path(path).read_text()
+    return _truncate(content)
+
+
+def _write_file(arguments: dict) -> str:
+    path = Path(arguments["path"])
+    content = arguments["content"]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content)
+    lines = content.count("\n") + 1
+    return f"Wrote {lines} lines to {path}"
+
+
+def _list_directory(arguments: dict) -> str:
+    path = Path(arguments["path"])
+    recursive = arguments.get("recursive", False)
+    if not recursive:
+        entries = sorted(os.listdir(path))
+        return "\n".join(entries)
+    # Recursive tree
+    lines = []
+    for root, dirs, files in os.walk(path):
+        level = len(Path(root).relative_to(path).parts)
+        indent = "  " * level
+        lines.append(f"{indent}{Path(root).name}/")
+        sub_indent = "  " * (level + 1)
+        for f in sorted(files):
+            lines.append(f"{sub_indent}{f}")
+        dirs.sort()
+    return _truncate("\n".join(lines))
+
+
+def _search_files(arguments: dict) -> str:
+    pattern = arguments["pattern"]
+    path = arguments.get("path", ".")
+    result = subprocess.run(
+        ["grep", "-rn", pattern, path],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    output = result.stdout
+    if result.returncode == 1:
+        return ""  # no matches
+    if result.returncode != 0 and result.stderr:
+        return f"Error: grep failed: {result.stderr.strip()}"
+    return _truncate(output)
+
+
+def execute_tool(name: str, arguments: dict) -> str:
+    """Execute a tool by name. Never raises — returns error strings."""
+    try:
+        if name == "read_file":
+            return _read_file(arguments)
+        elif name == "write_file":
+            return _write_file(arguments)
+        elif name == "list_directory":
+            return _list_directory(arguments)
+        elif name == "search_files":
+            return _search_files(arguments)
+        else:
+            return f"Error: Unknown tool '{name}'"
+    except Exception as error:
+        return f"Error: {type(error).__name__}: {error}"
 
 
 def clean_arguments(raw_args: str) -> dict:
