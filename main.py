@@ -8,13 +8,14 @@ import os
 import signal
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import httpx
 
 from chat import ChatSession
 from client import LlamaClient, ServerStatus, ModelInfo
 from config import (
+    AGENT_SYSTEM_PROMPT,
     AppConfig,
     ServerConfig,
     load_config,
@@ -24,6 +25,7 @@ from config import (
     SESSION_PATH,
 )
 import ui
+from tools import TOOL_DEFINITIONS, clean_arguments, execute_tool, execute_command
 
 
 @dataclass
@@ -36,6 +38,7 @@ class ChatState:
     model: str  # model id
     context_length: int
     config: AppConfig
+    agent_mode: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -220,107 +223,184 @@ async def _queue_updater(
 # Send message
 # ---------------------------------------------------------------------------
 
+MAX_TOOL_ITERATIONS = 15
+
+
 async def send_message(state: ChatState, user_input: str) -> str | None:
     """Send a message and stream the response.
+
+    When agent_mode is on, runs a tool loop: the model can call tools
+    and the results are sent back until it responds with plain text.
 
     Returns None on success, or a prefill string if cancelled/failed.
     """
     state.session.add_message("user", user_input)
 
-    spinner = ui.SpinnerDisplay()
-    spinner.start()
-    queue_task: asyncio.Task | None = None
-    stream_display = ui.StreamingDisplay()
-    stream = None
-
     try:
-        started = time.monotonic()
-        queue_task = asyncio.create_task(
-            _queue_updater(spinner, state.server, started)
-        )
+        for iteration in range(MAX_TOOL_ITERATIONS):
+            spinner = ui.SpinnerDisplay()
+            spinner.start()
+            queue_task: asyncio.Task | None = None
+            stream_display = ui.StreamingDisplay()
+            stream = None
 
-        # Count tokens and truncate if needed (using accurate count)
-        messages = state.session.get_messages_for_api()
-        prompt_tokens = await state.client.count_messages_tokens(messages)
-        pairs_dropped = state.session.truncate_if_needed(prompt_tokens)
+            try:
+                started = time.monotonic()
+                queue_task = asyncio.create_task(
+                    _queue_updater(spinner, state.server, started)
+                )
 
-        # Re-count if we truncated
-        if pairs_dropped > 0:
-            messages = state.session.get_messages_for_api()
-            prompt_tokens = await state.client.count_messages_tokens(messages)
+                # Build messages with agent system prompt if needed
+                messages = state.session.get_messages_for_api()
+                if state.agent_mode:
+                    messages = list(messages)  # copy
+                    messages[0] = {
+                        "role": "system",
+                        "content": AGENT_SYSTEM_PROMPT + "\n\n" + messages[0]["content"],
+                    }
 
-        stream = await state.client.stream_chat(
-            messages=messages,
-            temperature=state.config.temperature,
-            max_tokens=state.config.max_tokens,
-        )
-        stream.set_prompt_tokens(prompt_tokens)
+                # Count tokens and truncate if needed
+                prompt_tokens = await state.client.count_messages_tokens(messages)
+                pairs_dropped = state.session.truncate_if_needed(prompt_tokens)
 
-        first_token = True
-        async for token, is_reasoning in stream:
-            if first_token:
-                queue_task.cancel()
+                if pairs_dropped > 0:
+                    messages = state.session.get_messages_for_api()
+                    if state.agent_mode:
+                        messages = list(messages)
+                        messages[0] = {
+                            "role": "system",
+                            "content": AGENT_SYSTEM_PROMPT + "\n\n" + messages[0]["content"],
+                        }
+                    prompt_tokens = await state.client.count_messages_tokens(messages)
+
+                stream = await state.client.stream_chat(
+                    messages=messages,
+                    temperature=state.config.temperature,
+                    max_tokens=state.config.max_tokens,
+                    tools=TOOL_DEFINITIONS if state.agent_mode else None,
+                )
+                stream.set_prompt_tokens(prompt_tokens)
+
+                first_token = True
+                async for token, is_reasoning in stream:
+                    if first_token:
+                        queue_task.cancel()
+                        spinner.stop()
+                        stream_display.start()
+                        first_token = False
+                    stream_display.update(token, is_reasoning)
+
+                # Stream finished
+                if first_token:
+                    queue_task.cancel()
+                    spinner.stop()
+                else:
+                    stream_display.stop()
+
+                # Handle empty/interrupted
+                if stream.is_empty and not stream.has_tool_calls:
+                    state.session.remove_last_message()
+                    ui.print_muted("(empty response)")
+                    return user_input
+
+                if stream.was_interrupted:
+                    stream_display.stop()
+                    state.session.remove_last_message()
+                    ui.print_muted("(stream interrupted)")
+                    return user_input
+
+                # Check for tool calls
+                if not stream.has_tool_calls:
+                    # Normal text response
+                    state.session.add_message("assistant", stream.content)
+                    ui.print_stats(
+                        stream.final_token_count,
+                        stream.duration,
+                        stream.hit_max_tokens,
+                        stream.total_context_tokens,
+                        state.context_length,
+                    )
+                    return None
+
+                # Tool calls — add assistant message and execute
+                tool_call_kwargs: dict = {}
+                if stream.content:
+                    tool_call_kwargs["content"] = stream.content
+                tool_call_kwargs["tool_calls"] = stream.tool_calls
+                state.session.add_message("assistant", **tool_call_kwargs)
+
+                for tool_call in stream.tool_calls:
+                    name = tool_call["function"]["name"]
+                    raw_arguments = tool_call["function"]["arguments"]
+                    tool_call_id = tool_call["id"]
+
+                    try:
+                        arguments = clean_arguments(raw_arguments)
+                    except Exception:
+                        arguments = {}
+                        result = f"Error: Failed to parse tool arguments: {raw_arguments}"
+                        ui.print_tool_call(name, arguments)
+                        ui.print_tool_result(name, result)
+                        state.session.add_message("tool", result, tool_call_id=tool_call_id)
+                        continue
+
+                    ui.print_tool_call(name, arguments)
+
+                    if name == "run_command":
+                        # Stream command output
+                        command = arguments.get("command", "")
+                        output_lines: list[str] = []
+                        async for line in execute_command(command):
+                            output_lines.append(line)
+                            ui.print_command_output(line)
+                        result = "".join(output_lines)
+                    else:
+                        result = execute_tool(name, arguments)
+
+                    ui.print_tool_result(name, result)
+                    state.session.add_message("tool", result, tool_call_id=tool_call_id)
+
+                # Loop continues — next iteration will send updated history
+
+            except asyncio.CancelledError:
+                if queue_task:
+                    queue_task.cancel()
                 spinner.stop()
-                stream_display.start()
-                first_token = False
-            stream_display.update(token, is_reasoning)
+                stream_display.stop()
+                state.session.remove_last_message()
+                return user_input
 
-        # Stream finished — stop displays
-        if first_token:
-            # Never got a token
-            queue_task.cancel()
-            spinner.stop()
+            except (httpx.ConnectError, httpx.ConnectTimeout) as error:
+                if queue_task:
+                    queue_task.cancel()
+                spinner.stop()
+                stream_display.stop()
+                state.session.remove_last_message()
+                ui.print_error(f"Connection failed: {error}")
+                return user_input
+
+            except httpx.HTTPStatusError as error:
+                if queue_task:
+                    queue_task.cancel()
+                spinner.stop()
+                stream_display.stop()
+                state.session.remove_last_message()
+                ui.print_error(f"Server error: {error.response.status_code}")
+                return user_input
+
         else:
-            stream_display.stop()
-
-        # Handle outcomes
-        if stream.is_empty:
-            state.session.remove_last_message()
-            ui.print_muted("(empty response)")
-            return user_input
-
-        if stream.was_interrupted:
-            stream_display.stop()
-            state.session.remove_last_message()
-            ui.print_muted("(stream interrupted)")
-            return user_input
-
-        # Normal completion
-        state.session.add_message("assistant", stream.content)
-        ui.print_stats(
-            stream.final_token_count,
-            stream.duration,
-            stream.hit_max_tokens,
-            stream.total_context_tokens,
-            state.context_length,
-        )
-        return None
+            # Hit iteration cap
+            ui.print_error(
+                f"Agent hit the {MAX_TOOL_ITERATIONS}-iteration limit. "
+                "Showing last response — you can tell it to continue."
+            )
+            if stream and stream.content:
+                ui.console.print()
+            return None
 
     except asyncio.CancelledError:
-        # Ctrl+C during generation
-        if queue_task:
-            queue_task.cancel()
-        spinner.stop()
-        stream_display.stop()
+        # Outer cancellation (e.g., during tool execution)
         state.session.remove_last_message()
-        return user_input
-
-    except (httpx.ConnectError, httpx.ConnectTimeout) as e:
-        if queue_task:
-            queue_task.cancel()
-        spinner.stop()
-        stream_display.stop()
-        state.session.remove_last_message()
-        ui.print_error(f"Connection failed: {e}")
-        return user_input
-
-    except httpx.HTTPStatusError as e:
-        if queue_task:
-            queue_task.cancel()
-        spinner.stop()
-        stream_display.stop()
-        state.session.remove_last_message()
-        ui.print_error(f"Server error: {e.response.status_code}")
         return user_input
 
 
@@ -385,6 +465,17 @@ async def handle_command(cmd: str, args: str, state: ChatState) -> bool:
         ui.print_muted(f"Switched to {new_model} on {new_server}.")
         return True
 
+    elif cmd == "/agent":
+        if args.lower() == "on":
+            state.agent_mode = True
+        elif args.lower() == "off":
+            state.agent_mode = False
+        else:
+            state.agent_mode = not state.agent_mode
+        status = "on" if state.agent_mode else "off"
+        ui.print_muted(f"Agent mode {status}.")
+        return True
+
     else:
         ui.print_muted("Unknown command. Type /help for available commands.")
         return True
@@ -425,7 +516,8 @@ async def chat_loop(state: ChatState) -> None:
     try:
         while True:
             try:
-                user_input = await asyncio.to_thread(ui.get_input, "You > ", prefill)
+                prompt = "Agent > " if state.agent_mode else "You > "
+                user_input = await asyncio.to_thread(ui.get_input, prompt, prefill)
                 prefill = ""
             except (EOFError, KeyboardInterrupt):
                 # EOFError = Ctrl+D, KeyboardInterrupt = signal leaked to thread
