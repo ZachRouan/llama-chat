@@ -35,11 +35,16 @@ class ChatStream:
         self.first_token_time: float | None = None
         self.last_token_time: float | None = None
         self.was_interrupted: bool = False
+        self.finish_reason: str | None = None
         self._usage_tokens: int | None = None
 
     @property
     def is_empty(self) -> bool:
         return self.token_count == 0
+
+    @property
+    def hit_max_tokens(self) -> bool:
+        return self.finish_reason == "length"
 
     @property
     def duration(self) -> float:
@@ -69,8 +74,12 @@ class ChatStream:
                 choices = chunk.get("choices", [])
                 if not choices:
                     continue
-                delta = choices[0].get("delta", {})
+                choice = choices[0]
+                delta = choice.get("delta", {})
                 content = delta.get("content")
+                finish_reason = choice.get("finish_reason")
+                if finish_reason:
+                    self.finish_reason = finish_reason
                 usage = chunk.get("usage")
                 if usage and "completion_tokens" in usage:
                     self._usage_tokens = usage["completion_tokens"]

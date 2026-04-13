@@ -81,7 +81,7 @@ def load_config() -> AppConfig:
     return AppConfig(
         servers=servers,
         system_prompt=os.getenv("LLAMA_SYSTEM_PROMPT", "You are a helpful assistant."),
-        max_tokens=int(os.getenv("LLAMA_MAX_TOKENS", "2048")),
+        max_tokens=int(os.getenv("LLAMA_MAX_TOKENS", "8192")),
         temperature=float(os.getenv("LLAMA_TEMPERATURE", "0.7")),
         context_length=int(os.getenv("LLAMA_CONTEXT_LENGTH", "4096")),
     )
@@ -176,7 +176,7 @@ def run_first_time_setup() -> AppConfig:
     )
 
     temp_str = input("Temperature (0.0-2.0) [0.7]: ").strip() or "0.7"
-    max_tokens_str = input("Max tokens per response [2048]: ").strip() or "2048"
+    max_tokens_str = input("Max tokens per response [8192]: ").strip() or "8192"
     context_str = input("Fallback context length [4096]: ").strip() or "4096"
 
     # Write .env

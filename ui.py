@@ -146,7 +146,7 @@ class StreamingDisplay:
             self._live = None
 
 
-def print_stats(token_count: int, duration: float) -> None:
+def print_stats(token_count: int, duration: float, truncated: bool = False) -> None:
     """Display token/s statistics after a response."""
     if duration > 0:
         speed = token_count / duration
@@ -155,6 +155,11 @@ def print_stats(token_count: int, duration: float) -> None:
         )
     elif token_count > 0:
         console.print(f"[dim]{token_count} tokens[/dim]")
+    if truncated:
+        console.print(
+            "[yellow](Response truncated — hit max_tokens limit. "
+            "Increase LLAMA_MAX_TOKENS in config to allow longer responses.)[/yellow]"
+        )
 
 
 def print_error(message: str) -> None:
