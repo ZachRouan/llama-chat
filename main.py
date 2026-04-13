@@ -433,6 +433,15 @@ async def send_message(state: ChatState, user_input: str) -> str | None:
                     ui.print_tool_result(name, result)
                     state.session.add_message("tool", result, tool_call_id=tool_call_id, name=name)
 
+                # Show stats for this tool call iteration
+                ui.print_stats(
+                    stream.final_token_count,
+                    stream.duration,
+                    stream.hit_max_tokens,
+                    stream.total_context_tokens,
+                    state.context_length,
+                )
+
                 # Loop continues — next iteration will send updated history
 
             except asyncio.CancelledError:
