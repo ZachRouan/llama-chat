@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import fnmatch
 import json
 from pathlib import Path
 
@@ -33,3 +34,46 @@ def load_permissions(directory: Path) -> dict:
         return data
     except (json.JSONDecodeError, OSError):
         return dict(DEFAULT_PERMISSIONS)
+
+
+def _get_match_value(tool_name: str, arguments: dict) -> str:
+    """Get the value to match against allow_rules for a given tool."""
+    if tool_name == "write_file":
+        return arguments.get("path", "")
+    elif tool_name == "run_command":
+        return arguments.get("command", "")
+    return ""
+
+
+def _matches_rule(rule: dict, tool_name: str, match_value: str) -> bool:
+    """Check if an allow_rule matches the tool call."""
+    if rule.get("tool") != tool_name:
+        return False
+    pattern = rule.get("pattern", "")
+    if tool_name == "write_file":
+        # Prefix match — path starts with the rule's directory
+        return match_value.startswith(pattern)
+    else:
+        # Glob match for run_command
+        return fnmatch.fnmatch(match_value, pattern)
+
+
+def check_permission(permissions: dict, tool_name: str, arguments: dict) -> str:
+    """Check if a tool call is allowed or needs approval.
+
+    Returns "allow" or "ask". Unknown tools or invalid values default to "ask".
+    Rule matching: write_file uses prefix match; run_command uses glob match.
+    """
+    default = permissions.get(tool_name, "ask")
+    if default == "allow":
+        return "allow"
+    if default != "ask":
+        return "ask"  # invalid value, safe default
+
+    # Check allow_rules for explicit overrides
+    match_value = _get_match_value(tool_name, arguments)
+    for rule in permissions.get("allow_rules", []):
+        if _matches_rule(rule, tool_name, match_value):
+            return "allow"
+
+    return "ask"
