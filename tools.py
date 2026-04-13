@@ -3,11 +3,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
 import subprocess
 from pathlib import Path
+from typing import AsyncGenerator
 
 
 MAX_OUTPUT_CHARS = 50_000
@@ -182,3 +184,58 @@ def clean_arguments(raw_args: str) -> dict:
     # Match <|"|> with an optional preceding backslash on the inner quote.
     cleaned = re.sub(r'<\|\\?"\|>', "", raw_args)
     return json.loads(cleaned)
+
+
+async def execute_command(
+    command: str, timeout: int = 60
+) -> AsyncGenerator[str, None]:
+    """Execute a shell command, yielding output lines for real-time display.
+
+    Uses stdin=DEVNULL to prevent interactive commands from hanging.
+    Configurable timeout (default 60s) kills stuck processes.
+    Combines stdout and stderr so all output is captured.
+    Never raises — yields error strings on failure.
+    """
+    try:
+        process = await asyncio.create_subprocess_shell(
+            command,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+            stdin=asyncio.subprocess.DEVNULL,
+        )
+        total_chars = 0
+        truncated = False
+        try:
+            deadline = asyncio.get_event_loop().time() + timeout
+            while True:
+                remaining = deadline - asyncio.get_event_loop().time()
+                if remaining <= 0:
+                    process.kill()
+                    await process.wait()
+                    yield f"Error: Command timed out after {timeout} seconds\n"
+                    return
+                try:
+                    line = await asyncio.wait_for(
+                        process.stdout.readline(), timeout=remaining
+                    )
+                except asyncio.TimeoutError:
+                    process.kill()
+                    await process.wait()
+                    yield f"Error: Command timed out after {timeout} seconds\n"
+                    return
+                if not line:
+                    break
+                decoded = line.decode(errors="replace")
+                total_chars += len(decoded)
+                if total_chars > MAX_OUTPUT_CHARS and not truncated:
+                    yield "[truncated]\n"
+                    truncated = True
+                elif not truncated:
+                    yield decoded
+            await process.wait()
+        except Exception:
+            process.kill()
+            await process.wait()
+            raise
+    except Exception as error:
+        yield f"Error: {type(error).__name__}: {error}\n"

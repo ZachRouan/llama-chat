@@ -119,3 +119,50 @@ def test_output_truncation(tmp_path):
     result = execute_tool("read_file", {"path": str(f)})
     assert len(result) <= MAX_OUTPUT_CHARS + 100  # allow room for [truncated] suffix
     assert "[truncated]" in result
+
+
+import asyncio
+from tools import execute_command
+
+
+async def test_execute_command_echo():
+    lines = []
+    async for line in execute_command("echo hello"):
+        lines.append(line)
+    output = "".join(lines)
+    assert "hello" in output
+
+
+async def test_execute_command_stderr():
+    lines = []
+    async for line in execute_command("echo error >&2"):
+        lines.append(line)
+    output = "".join(lines)
+    assert "error" in output
+
+
+async def test_execute_command_timeout():
+    lines = []
+    async for line in execute_command("sleep 120", timeout=2):
+        lines.append(line)
+    output = "".join(lines)
+    assert "timed out" in output.lower()
+
+
+async def test_execute_command_stdin_devnull():
+    """Commands that read stdin should exit immediately, not hang."""
+    lines = []
+    async for line in execute_command("cat"):
+        lines.append(line)
+    # cat with no args + DEVNULL should produce empty output and exit
+    output = "".join(lines)
+    assert "Error:" not in output
+
+
+async def test_execute_command_nonexistent():
+    lines = []
+    async for line in execute_command("nonexistent_command_xyz"):
+        lines.append(line)
+    output = "".join(lines)
+    # Should get some error output (either from shell or our handler)
+    assert len(output) > 0
