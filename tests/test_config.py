@@ -55,7 +55,7 @@ def test_load_config_defaults(monkeypatch):
     assert config.servers[0].port == 8082
     assert config.system_prompt == "You are a helpful assistant."
     assert config.max_tokens == 8192
-    assert config.temperature == 0.7
+    assert config.temperature == 1.0
     assert config.context_length == 4096
 
 

@@ -15,6 +15,16 @@ DATA_DIR = Path.home() / ".local" / "share" / "llama-chat"
 HISTORY_DIR = DATA_DIR / "history"
 SESSION_PATH = DATA_DIR / "session.json"
 
+AGENT_SYSTEM_PROMPT = """You are a coding agent. You have tools to read files, write files, run commands, list directories, and search files.
+
+When given a task:
+1. Read relevant files to understand the current code
+2. Plan your changes
+3. Make changes file by file
+4. Verify your changes work (run tests, check syntax)
+
+Work step by step. Only call one or two tools at a time. After writing a file, verify it looks correct by reading it back or running a relevant command."""
+
 
 @dataclass
 class ServerConfig:
@@ -82,7 +92,7 @@ def load_config() -> AppConfig:
         servers=servers,
         system_prompt=os.getenv("LLAMA_SYSTEM_PROMPT", "You are a helpful assistant."),
         max_tokens=int(os.getenv("LLAMA_MAX_TOKENS", "8192")),
-        temperature=float(os.getenv("LLAMA_TEMPERATURE", "0.7")),
+        temperature=float(os.getenv("LLAMA_TEMPERATURE", "1.0")),
         context_length=int(os.getenv("LLAMA_CONTEXT_LENGTH", "4096")),
     )
 
@@ -175,7 +185,7 @@ def run_first_time_setup() -> AppConfig:
         or "You are a helpful assistant."
     )
 
-    temp_str = input("Temperature (0.0-2.0) [0.7]: ").strip() or "0.7"
+    temp_str = input("Temperature (0.0-2.0) [1.0]: ").strip() or "1.0"
     max_tokens_str = input("Max tokens per response [8192]: ").strip() or "8192"
     context_str = input("Fallback context length [4096]: ").strip() or "4096"
 
