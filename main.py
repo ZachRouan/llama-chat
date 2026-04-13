@@ -26,7 +26,10 @@ from config import (
     SESSION_PATH,
 )
 import ui
+from pathlib import Path
+
 from tools import TOOL_DEFINITIONS, clean_arguments, execute_tool, execute_command
+from permissions import load_permissions, check_permission, add_allow_rule
 
 
 @dataclass
@@ -378,6 +381,37 @@ async def send_message(state: ChatState, user_input: str) -> str | None:
                         continue
 
                     ui.print_tool_call(name, arguments)
+
+                    # Permission check
+                    working_directory = Path.cwd()
+                    permissions = load_permissions(working_directory)
+                    permission = check_permission(permissions, name, arguments)
+                    if permission == "ask":
+                        # Build summary for prompt
+                        if name == "write_file":
+                            path = arguments.get("path", "")
+                            content = arguments.get("content", "")
+                            line_count = content.count("\n") + 1
+                            summary = f"{path} ({line_count} lines)"
+                        elif name == "run_command":
+                            summary = arguments.get("command", "")
+                        else:
+                            summary = str(arguments)[:100]
+
+                        response = await asyncio.to_thread(
+                            ui.prompt_tool_permission, name, summary
+                        )
+                        if response == "no":
+                            result = "User denied this tool call."
+                            ui.print_tool_result(name, result)
+                            state.session.add_message("tool", result, tool_call_id=tool_call_id, name=name)
+                            continue
+                        elif response == "always":
+                            if name == "write_file":
+                                derived_parent = str(Path(arguments.get("path", "")).parent)
+                                if derived_parent == ".":
+                                    ui.print_broad_pattern_warning(name)
+                            add_allow_rule(working_directory, name, arguments)
 
                     if name == "run_command":
                         # Stream command output
