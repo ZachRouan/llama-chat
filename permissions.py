@@ -58,6 +58,53 @@ def _matches_rule(rule: dict, tool_name: str, match_value: str) -> bool:
         return fnmatch.fnmatch(match_value, pattern)
 
 
+def _derive_pattern(tool_name: str, arguments: dict) -> str:
+    """Derive an allow rule pattern from tool arguments."""
+    if tool_name == "write_file":
+        path = arguments.get("path", "")
+        parent = str(Path(path).parent)
+        if parent == ".":
+            return ""  # bare filename — matches everything in cwd
+        return parent + "/"
+    elif tool_name == "run_command":
+        command = arguments.get("command", "")
+        first_word = command.split()[0] if command.split() else ""
+        return first_word + "*"
+    return ""
+
+
+def _save_permissions(directory: Path, permissions: dict) -> None:
+    """Write permissions dict to the permissions file."""
+    permissions_path = directory / PERMISSIONS_FILENAME
+    permissions_path.write_text(json.dumps(permissions, indent=2) + "\n")
+
+
+def add_allow_rule(directory: Path, tool_name: str, arguments: dict) -> None:
+    """Add an allow rule derived from the tool arguments. Skips duplicates."""
+    permissions = load_permissions(directory)
+    pattern = _derive_pattern(tool_name, arguments)
+    rule = {"tool": tool_name, "pattern": pattern}
+    if rule not in permissions["allow_rules"]:
+        permissions["allow_rules"].append(rule)
+        _save_permissions(directory, permissions)
+
+
+def remove_allow_rule(directory: Path, index: int) -> None:
+    """Remove an allow rule by index. Silently ignores invalid indices."""
+    permissions = load_permissions(directory)
+    rules = permissions.get("allow_rules", [])
+    if 0 <= index < len(rules):
+        rules.pop(index)
+        _save_permissions(directory, permissions)
+
+
+def clear_allow_rules(directory: Path) -> None:
+    """Remove all allow rules."""
+    permissions = load_permissions(directory)
+    permissions["allow_rules"] = []
+    _save_permissions(directory, permissions)
+
+
 def check_permission(permissions: dict, tool_name: str, arguments: dict) -> str:
     """Check if a tool call is allowed or needs approval.
 
