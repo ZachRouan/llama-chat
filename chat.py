@@ -44,6 +44,10 @@ class ChatSession:
     def set_system_prompt(self, prompt: str) -> None:
         self._system_prompt = prompt
 
+    def set_context_length(self, length: int) -> None:
+        """Update the context window size (e.g., after switching models)."""
+        self._context_length = length
+
     def clear(self) -> list[dict[str, str]]:
         old = self._messages
         self._messages = []

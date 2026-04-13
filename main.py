@@ -264,8 +264,9 @@ async def send_message(state: ChatState, user_input: str) -> str | None:
 
         # Handle outcomes
         if stream.is_empty:
+            state.session.remove_last_message()
             ui.print_muted("(empty response)")
-            return None
+            return user_input
 
         if stream.was_interrupted:
             stream_display.stop()
@@ -363,7 +364,7 @@ async def handle_command(cmd: str, args: str, state: ChatState) -> bool:
         state.server = new_server
         state.model = new_model
         state.context_length = new_ctx
-        state.session._context_length = new_ctx
+        state.session.set_context_length(new_ctx)
         ui.print_muted(f"Switched to {new_model} on {new_server}.")
         return True
 
@@ -443,12 +444,13 @@ async def chat_loop(state: ChatState) -> None:
 # Resume flow
 # ---------------------------------------------------------------------------
 
-async def _try_resume(config: AppConfig) -> ChatState | None:
+async def _try_resume(config: AppConfig) -> tuple[ChatState | None, ChatSession | None]:
     """Attempt to resume a previous session.
 
-    Returns (ChatState, None) on full resume,
-    (None, ChatSession) to keep history but switch model,
-    or (None, None) to start fresh.
+    Returns:
+        (ChatState, None) on full resume,
+        (None, ChatSession) to keep history but switch model,
+        or (None, None) to start fresh.
     """
     if not SESSION_PATH.exists():
         return None, None
@@ -513,7 +515,7 @@ async def _try_resume(config: AppConfig) -> ChatState | None:
         auto = await client.get_context_length()
         ctx = auto if auto is not None else config.context_length
 
-    session._context_length = ctx
+    session.set_context_length(ctx)
     model_id = current_model or saved_model
     return ChatState(
         client=client,
@@ -566,7 +568,7 @@ async def main() -> None:
         if reuse_session is not None:
             # Keep conversation history from declined resume
             session = reuse_session
-            session._context_length = context_length
+            session.set_context_length(context_length)
         else:
             session = ChatSession(
                 system_prompt=config.system_prompt,
