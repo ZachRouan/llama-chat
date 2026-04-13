@@ -225,6 +225,48 @@ def print_muted(message: str) -> None:
     console.print(f"[dim]{message}[/dim]")
 
 
+def print_tool_call(name: str, arguments: dict) -> None:
+    """Display a tool call in dim style."""
+    if name == "read_file":
+        summary = arguments.get("path", "")
+    elif name == "write_file":
+        path = arguments.get("path", "")
+        content = arguments.get("content", "")
+        lines = content.count("\n") + 1
+        summary = f"{path} ({lines} lines)"
+    elif name == "run_command":
+        summary = arguments.get("command", "")
+    elif name == "list_directory":
+        summary = arguments.get("path", ".")
+    elif name == "search_files":
+        pattern = arguments.get("pattern", "")
+        path = arguments.get("path", ".")
+        summary = f'"{pattern}" in {path}'
+    else:
+        summary = str(arguments)[:100]
+    console.print(f"[dim]→ {name}: {summary}[/dim]")
+
+
+def print_tool_result(name: str, result: str, max_display: int = 200) -> None:
+    """Display a brief tool result in dim style."""
+    if result.startswith("Error:"):
+        console.print(f"[red]  ✗ {result}[/red]")
+    else:
+        lines = result.count("\n")
+        if lines > 5:
+            console.print(f"[dim]  ✓ ({lines} lines)[/dim]")
+        else:
+            preview = result[:max_display]
+            if len(result) > max_display:
+                preview += "..."
+            console.print(f"[dim]  ✓ {preview}[/dim]")
+
+
+def print_command_output(line: str) -> None:
+    """Display a single line of command output in dim style."""
+    console.print(f"[dim]  {line.rstrip()}[/dim]", highlight=False)
+
+
 def print_help(config_path: str) -> None:
     """Display available commands and config path."""
     table = Table(show_header=True, box=None, padding=(0, 2))
@@ -234,6 +276,7 @@ def print_help(config_path: str) -> None:
     table.add_row("/clear", "Clear conversation history")
     table.add_row("/system <prompt>", "Change the system prompt")
     table.add_row("/model", "Switch to a different model")
+    table.add_row("/agent", "Toggle coding agent mode (tool use)")
     table.add_row("/quit", "Save and exit")
 
     console.print()
