@@ -168,7 +168,7 @@ async def select_model(
                     ui.print_error(f"Server {sc.host}:{sc.port} went offline.")
                     await chosen_client.close()
                     return None
-        except (KeyboardInterrupt, EOFError):
+        except (KeyboardInterrupt, EOFError, asyncio.CancelledError):
             await chosen_client.close()
             # Return to menu by recursing
             return await select_model(config)
@@ -264,7 +264,6 @@ async def send_message(state: ChatState, user_input: str) -> str | None:
 
         # Handle outcomes
         if stream.is_empty:
-            state.session.remove_last_message()
             ui.print_muted("(empty response)")
             return None
 
@@ -335,7 +334,7 @@ async def handle_command(cmd: str, args: str, state: ChatState) -> bool:
     elif cmd == "/system":
         if args:
             state.session.set_system_prompt(args)
-            ui.print_muted(f"System prompt updated.")
+            ui.print_muted("System prompt updated.")
         else:
             ui.print_muted(f"Current system prompt: {state.session.system_prompt}")
         return True
@@ -445,9 +444,14 @@ async def chat_loop(state: ChatState) -> None:
 # ---------------------------------------------------------------------------
 
 async def _try_resume(config: AppConfig) -> ChatState | None:
-    """Attempt to resume a previous session. Returns ChatState or None."""
+    """Attempt to resume a previous session.
+
+    Returns (ChatState, None) on full resume,
+    (None, ChatSession) to keep history but switch model,
+    or (None, None) to start fresh.
+    """
     if not SESSION_PATH.exists():
-        return None
+        return None, None
 
     session, meta = ChatSession.load(SESSION_PATH, config.max_tokens)
     saved_server = meta["server"]
@@ -456,7 +460,7 @@ async def _try_resume(config: AppConfig) -> ChatState | None:
     msg = f"Resume previous session with {saved_model} on {saved_server}?"
     if not ui.confirm(msg):
         ChatSession.archive(SESSION_PATH, HISTORY_DIR)
-        return None
+        return None, None
 
     # Parse saved server
     parts = saved_server.split(":")
@@ -475,7 +479,7 @@ async def _try_resume(config: AppConfig) -> ChatState | None:
     if status == ServerStatus.OFFLINE:
         await client.close()
         ui.print_muted(f"Server {saved_server} is offline. Selecting a new model...")
-        return None
+        return None, session  # keep history
 
     # Server is online or loading — check model
     if status == ServerStatus.LOADING:
@@ -488,7 +492,7 @@ async def _try_resume(config: AppConfig) -> ChatState | None:
             if status == ServerStatus.OFFLINE:
                 await client.close()
                 ui.print_muted(f"Server {saved_server} went offline. Selecting a new model...")
-                return None
+                return None, session  # keep history
 
     models = await client.get_models()
     current_model = models[0].id if models else None
@@ -500,8 +504,7 @@ async def _try_resume(config: AppConfig) -> ChatState | None:
         )
         if not ui.confirm(msg):
             await client.close()
-            # Fall through to model selection but keep history
-            return None
+            return None, session  # keep history, switch model
 
     # Resolve context length
     if server_config:
@@ -519,7 +522,7 @@ async def _try_resume(config: AppConfig) -> ChatState | None:
         model=model_id,
         context_length=ctx,
         config=config,
-    )
+    ), None
 
 
 # ---------------------------------------------------------------------------
@@ -540,8 +543,9 @@ async def main() -> None:
 
     # Resume check
     state: ChatState | None = None
+    reuse_session: ChatSession | None = None
     try:
-        state = await _try_resume(config)
+        state, reuse_session = await _try_resume(config)
     except (KeyboardInterrupt, EOFError):
         print("\nExiting.")
         return
@@ -559,11 +563,16 @@ async def main() -> None:
 
         client, server, model_id, context_length, server_config = result
 
-        session = ChatSession(
-            system_prompt=config.system_prompt,
-            context_length=context_length,
-            max_tokens=config.max_tokens,
-        )
+        if reuse_session is not None:
+            # Keep conversation history from declined resume
+            session = reuse_session
+            session._context_length = context_length
+        else:
+            session = ChatSession(
+                system_prompt=config.system_prompt,
+                context_length=context_length,
+                max_tokens=config.max_tokens,
+            )
 
         state = ChatState(
             client=client,
