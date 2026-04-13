@@ -85,6 +85,7 @@ class ChatStream:
                 choice = choices[0]
                 delta = choice.get("delta", {})
                 content = delta.get("content")
+                reasoning = delta.get("reasoning_content")
                 finish_reason = choice.get("finish_reason")
                 if finish_reason:
                     self.finish_reason = finish_reason
@@ -94,14 +95,18 @@ class ChatStream:
                         self._usage_tokens = usage["completion_tokens"]
                     if "prompt_tokens" in usage:
                         self._prompt_tokens = usage["prompt_tokens"]
-                if content:
+                # Handle both reasoning and content tokens
+                token_content = reasoning or content
+                is_reasoning = reasoning is not None
+                if token_content:
                     now = time.monotonic()
                     if self.first_token_time is None:
                         self.first_token_time = now
                     self.last_token_time = now
                     self.token_count += 1
-                    self.content += content
-                    yield content
+                    if not is_reasoning:
+                        self.content += token_content
+                    yield (token_content, is_reasoning)
         except (httpx.StreamError, httpx.RemoteProtocolError):
             self.was_interrupted = True
         finally:

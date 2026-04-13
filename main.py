@@ -246,13 +246,13 @@ async def send_message(state: ChatState, user_input: str) -> str | None:
         )
 
         first_token = True
-        async for token in stream:
+        async for token, is_reasoning in stream:
             if first_token:
                 queue_task.cancel()
                 spinner.stop()
                 stream_display.start()
                 first_token = False
-            stream_display.update(token)
+            stream_display.update(token, is_reasoning)
 
         # Stream finished — stop displays
         if first_token:

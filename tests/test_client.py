@@ -90,7 +90,7 @@ async def test_stream_normal():
     )
     stream = ChatStream(response)
     tokens = [t async for t in stream]
-    assert tokens == ["Hello", " world"]
+    assert tokens == [("Hello", False), (" world", False)]
     assert stream.content == "Hello world"
     assert stream.final_token_count == 2
     assert stream.token_count == 2
@@ -134,7 +134,7 @@ async def test_stream_skips_malformed_lines():
     )
     stream = ChatStream(response)
     tokens = [t async for t in stream]
-    assert tokens == ["ok"]
+    assert tokens == [("ok", False)]
 
 
 # --- stream_chat with retry tests ---
@@ -155,7 +155,7 @@ async def test_stream_chat_success():
     messages = [{"role": "user", "content": "hello"}]
     stream = await client.stream_chat(messages, temperature=0.7, max_tokens=2048)
     tokens = [t async for t in stream]
-    assert tokens == ["Hi"]
+    assert tokens == [("Hi", False)]
     await http.aclose()
 
 
@@ -177,7 +177,7 @@ async def test_stream_chat_retries_on_connect_error():
     messages = [{"role": "user", "content": "hi"}]
     stream = await client.stream_chat(messages, temperature=0.7, max_tokens=100)
     tokens = [t async for t in stream]
-    assert tokens == ["ok"]
+    assert tokens == [("ok", False)]
     assert attempts == 3
     await http.aclose()
 

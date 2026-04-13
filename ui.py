@@ -119,12 +119,16 @@ class StreamingDisplay:
     """Manages rich.live.Live for streaming markdown rendering."""
 
     def __init__(self) -> None:
+        self._reasoning: str = ""
         self._content: str = ""
         self._live: Live | None = None
+        self._in_reasoning: bool = True
 
     def start(self) -> None:
         """Begin streaming display."""
+        self._reasoning = ""
         self._content = ""
+        self._in_reasoning = True
         self._live = Live(
             Text(""),
             console=console,
@@ -132,17 +136,53 @@ class StreamingDisplay:
         )
         self._live.start()
 
-    def update(self, token: str) -> None:
+    def update(self, token: str, is_reasoning: bool = False) -> None:
         """Append a token and re-render."""
-        self._content += token
+        if is_reasoning:
+            self._reasoning += token
+        else:
+            if self._in_reasoning and self._reasoning:
+                # Transition from reasoning to content
+                self._in_reasoning = False
+            self._content += token
+
         if self._live:
-            self._live.update(Markdown(self._content))
+            self._live.update(self._render())
+
+    def _render(self) -> Text | Markdown:
+        """Render current state with reasoning dimmed."""
+        if self._in_reasoning:
+            # Still in reasoning phase - show dim italic text
+            text = Text(self._reasoning, style="dim italic")
+            return text
+        elif self._reasoning:
+            # Have both reasoning and content - show reasoning dimmed, then content
+            result = Text()
+            result.append(self._reasoning.rstrip() + "\n\n", style="dim italic")
+            # For content, render as markdown by returning combined
+            # Actually, rich doesn't let us easily combine Text and Markdown
+            # So we'll just show reasoning as dim prefix, then markdown content
+            return result + Text.from_markup(f"[/dim][/italic]") if not self._content else Markdown(self._content)
+        else:
+            # No reasoning, just content
+            return Markdown(self._content)
 
     def stop(self) -> None:
         """Final render and stop."""
         if self._live:
-            self._live.update(Markdown(self._content))
-            self._live.stop()
+            # Final render: show reasoning collapsed/dimmed, then full markdown content
+            if self._reasoning and self._content:
+                # Print reasoning as dim block, then content as markdown
+                self._live.update(Text(""))  # Clear live display
+                self._live.stop()
+                console.print(Text(self._reasoning.rstrip(), style="dim italic"))
+                console.print()
+                console.print(Markdown(self._content))
+            elif self._content:
+                self._live.update(Markdown(self._content))
+                self._live.stop()
+            else:
+                self._live.stop()
             self._live = None
 
 
