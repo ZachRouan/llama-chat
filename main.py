@@ -29,7 +29,13 @@ import ui
 from pathlib import Path
 
 from tools import TOOL_DEFINITIONS, clean_arguments, execute_tool, execute_command
-from permissions import load_permissions, check_permission, add_allow_rule
+from permissions import (
+    load_permissions,
+    check_permission,
+    add_allow_rule,
+    remove_allow_rule,
+    clear_allow_rules,
+)
 
 
 @dataclass
@@ -530,6 +536,23 @@ async def handle_command(cmd: str, args: str, state: ChatState) -> bool:
         state.context_length = new_ctx
         state.session.set_context_length(new_ctx)
         ui.print_muted(f"Switched to {new_model} on {new_server}.")
+        return True
+
+    elif cmd == "/permissions":
+        working_directory = Path.cwd()
+        if args.lower() == "clear":
+            clear_allow_rules(working_directory)
+            ui.print_muted("All allow rules cleared.")
+        elif args.lower().startswith("remove "):
+            try:
+                index = int(args.split()[1]) - 1  # user sees 1-indexed
+                remove_allow_rule(working_directory, index)
+                ui.print_muted("Rule removed.")
+            except (ValueError, IndexError):
+                ui.print_muted("Usage: /permissions remove <number>")
+        else:
+            permissions = load_permissions(working_directory)
+            ui.print_permissions(permissions)
         return True
 
     elif cmd == "/agent":
