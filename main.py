@@ -313,16 +313,22 @@ async def send_message(state: ChatState, user_input: str) -> str | None:
                     if first_token:
                         queue_task.cancel()
                         spinner.stop()
+                        await asyncio.sleep(0)  # let cancellation propagate
                         stream_display.start()
                         first_token = False
                     stream_display.update(token, is_reasoning)
 
-                # Stream finished
+                # Stream finished — ensure queue task is dead
                 if first_token:
                     queue_task.cancel()
                     spinner.stop()
                 else:
                     stream_display.stop()
+                # Wait for queue task cleanup to avoid stale Live state
+                try:
+                    await queue_task
+                except (asyncio.CancelledError, Exception):
+                    pass
 
                 # Handle empty/interrupted
                 if stream.is_empty and not stream.has_tool_calls:
