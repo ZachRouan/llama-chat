@@ -225,7 +225,6 @@ async def send_message(state: ChatState, user_input: str) -> str | None:
     Returns None on success, or a prefill string if cancelled/failed.
     """
     state.session.add_message("user", user_input)
-    state.session.truncate_if_needed()
 
     spinner = ui.SpinnerDisplay()
     spinner.start()
@@ -239,11 +238,22 @@ async def send_message(state: ChatState, user_input: str) -> str | None:
             _queue_updater(spinner, state.server, started)
         )
 
+        # Count tokens and truncate if needed (using accurate count)
+        messages = state.session.get_messages_for_api()
+        prompt_tokens = await state.client.count_messages_tokens(messages)
+        pairs_dropped = state.session.truncate_if_needed(prompt_tokens)
+
+        # Re-count if we truncated
+        if pairs_dropped > 0:
+            messages = state.session.get_messages_for_api()
+            prompt_tokens = await state.client.count_messages_tokens(messages)
+
         stream = await state.client.stream_chat(
-            messages=state.session.get_messages_for_api(),
+            messages=messages,
             temperature=state.config.temperature,
             max_tokens=state.config.max_tokens,
         )
+        stream.set_prompt_tokens(prompt_tokens)
 
         first_token = True
         async for token, is_reasoning in stream:

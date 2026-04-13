@@ -60,16 +60,28 @@ class ChatSession:
             total_chars += len(msg["content"])
         return total_chars // 4
 
-    def truncate_if_needed(self) -> int:
-        """Drop oldest message pairs until conversation fits in context."""
+    def truncate_if_needed(self, token_count: int | None = None) -> int:
+        """Drop oldest message pairs until conversation fits in context.
+
+        Args:
+            token_count: Accurate token count if available. Falls back to
+                         estimation if None.
+        """
         pairs_dropped = 0
+        current_tokens = token_count if token_count is not None else self.estimate_tokens()
+
         while (
-            self.estimate_tokens() + self._max_tokens > self._context_length
+            current_tokens + self._max_tokens > self._context_length
             and len(self._messages) >= 2
         ):
-            self._messages.pop(0)
-            self._messages.pop(0)
+            # Remove oldest pair
+            removed1 = self._messages.pop(0)
+            removed2 = self._messages.pop(0)
             pairs_dropped += 1
+            # Estimate tokens removed (chars/4 for the removed messages)
+            removed_tokens = (len(removed1["content"]) + len(removed2["content"])) // 4
+            current_tokens -= removed_tokens
+
         return pairs_dropped
 
     def save(self, path: Path, server: str, model: str) -> None:

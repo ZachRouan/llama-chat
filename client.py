@@ -62,9 +62,14 @@ class ChatStream:
     @property
     def total_context_tokens(self) -> int | None:
         """Total tokens used (prompt + completion). None if unavailable."""
-        if self._prompt_tokens is not None and self._usage_tokens is not None:
-            return self._prompt_tokens + self._usage_tokens
+        if self._prompt_tokens is not None:
+            completion = self._usage_tokens if self._usage_tokens is not None else self.token_count
+            return self._prompt_tokens + completion
         return None
+
+    def set_prompt_tokens(self, count: int) -> None:
+        """Set the prompt token count (called before streaming starts)."""
+        self._prompt_tokens = count
 
     async def __aiter__(self) -> AsyncGenerator[str, None]:
         try:
@@ -163,6 +168,27 @@ class LlamaClient:
             return int(n_ctx) if n_ctx is not None else None
         except (httpx.HTTPError, ValueError, KeyError, TypeError):
             return None
+
+    async def count_tokens(self, text: str) -> int:
+        """Count tokens in text using the server's tokenizer."""
+        response = await self._http.post("/tokenize", json={"content": text})
+        response.raise_for_status()
+        data = response.json()
+        return len(data.get("tokens", []))
+
+    async def count_messages_tokens(self, messages: list[dict[str, str]]) -> int:
+        """Count tokens in a list of chat messages.
+
+        Concatenates message contents with role prefixes for a reasonable estimate.
+        Note: This won't exactly match the chat template, but is close.
+        """
+        parts = []
+        for msg in messages:
+            role = msg.get("role", "")
+            content = msg.get("content", "")
+            parts.append(f"{role}: {content}")
+        text = "\n".join(parts)
+        return await self.count_tokens(text)
 
     async def stream_chat(
         self,
