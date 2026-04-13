@@ -267,6 +267,49 @@ def print_command_output(line: str) -> None:
     console.print(f"[dim]  {line.rstrip()}[/dim]", highlight=False)
 
 
+def prompt_tool_permission(name: str, summary: str) -> str:
+    """Prompt user to allow a tool call. Returns 'yes', 'no', or 'always'."""
+    console.print(f"[yellow]  ⚠ {name}: {summary}[/yellow]")
+    while True:
+        response = input("  Allow? (y)es / (n)o / (a)lways: ").strip().lower()
+        if response in ("y", "yes"):
+            return "yes"
+        elif response in ("n", "no"):
+            return "no"
+        elif response in ("a", "always"):
+            return "always"
+        console.print("[dim]  Enter y, n, or a.[/dim]")
+
+
+def print_broad_pattern_warning(tool_name: str) -> None:
+    """Warn the user when 'always' would create a very broad rule."""
+    if tool_name == "write_file":
+        console.print("[yellow]  ⚠ This will allow all writes in the current directory.[/yellow]")
+
+
+def print_permissions(permissions: dict) -> None:
+    """Display current permission defaults and allow rules."""
+    console.print()
+    console.print("[bold]Tool defaults:[/bold]")
+    for tool in ["read_file", "list_directory", "search_files", "write_file", "run_command"]:
+        value = permissions.get(tool, "ask")
+        style = "green" if value == "allow" else "yellow"
+        console.print(f"  {tool:<16} [{style}]{value}[/{style}]")
+
+    rules = permissions.get("allow_rules", [])
+    if rules:
+        console.print()
+        console.print("[bold]Allow rules:[/bold]")
+        for i, rule in enumerate(rules):
+            tool = rule.get("tool", "?")
+            pattern = rule.get("pattern", "?")
+            console.print(f"  {i + 1}. {tool}: {pattern}")
+    else:
+        console.print()
+        console.print("[dim]No allow rules configured.[/dim]")
+    console.print()
+
+
 def print_help(config_path: str) -> None:
     """Display available commands and config path."""
     table = Table(show_header=True, box=None, padding=(0, 2))
@@ -277,6 +320,7 @@ def print_help(config_path: str) -> None:
     table.add_row("/system <prompt>", "Change the system prompt")
     table.add_row("/model", "Switch to a different model")
     table.add_row("/agent", "Toggle coding agent mode (tool use)")
+    table.add_row("/permissions", "Show or manage tool permission rules")
     table.add_row("/quit", "Save and exit")
 
     console.print()
