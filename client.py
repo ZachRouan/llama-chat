@@ -31,11 +31,15 @@ class ChatStream:
     def __init__(self, response: httpx.Response):
         self._response = response
         self.content: str = ""
+        self.reasoning: str = ""
         self.token_count: int = 0
         self.first_token_time: float | None = None
+        self.first_content_time: float | None = None
         self.last_token_time: float | None = None
         self.was_interrupted: bool = False
         self.finish_reason: str | None = None
+        self.timings: dict | None = None  # llama.cpp server-side timings (final chunk)
+        self.system_fingerprint: str | None = None
         self._usage_tokens: int | None = None
         self._prompt_tokens: int | None = None
         self._tool_calls: list[dict] = []
@@ -93,6 +97,10 @@ class ChatStream:
                     chunk = json.loads(data)
                 except json.JSONDecodeError:
                     continue
+                if chunk.get("timings"):
+                    self.timings = chunk["timings"]
+                if chunk.get("system_fingerprint"):
+                    self.system_fingerprint = chunk["system_fingerprint"]
                 choices = chunk.get("choices", [])
                 if not choices:
                     continue
@@ -136,7 +144,11 @@ class ChatStream:
                         self.first_token_time = now
                     self.last_token_time = now
                     self.token_count += 1
-                    if not is_reasoning:
+                    if is_reasoning:
+                        self.reasoning += token_content
+                    else:
+                        if self.first_content_time is None:
+                            self.first_content_time = now
                         self.content += token_content
                     yield (token_content, is_reasoning)
         except (httpx.StreamError, httpx.RemoteProtocolError):

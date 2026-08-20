@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import json as _json
 import os
 import signal
 import sys
@@ -258,7 +259,38 @@ def _restore_terminal() -> None:
 # Send message
 # ---------------------------------------------------------------------------
 
-MAX_TOOL_ITERATIONS = 15
+# Overridable for benchmarking: level 9-10 project builds legitimately need
+# more edit/test cycles than interactive chat does.
+MAX_TOOL_ITERATIONS = int(os.environ.get("LLAMA_MAX_TOOL_ITERATIONS", "15"))
+
+# Benchmark mode: when LLAMA_BENCH_JSON=1, emit one machine-readable line per
+# LLM iteration so external harnesses never have to scrape the rendered TTY
+# output (which drops fences, wraps lines, and mixes reasoning with content).
+BENCH_JSON = os.environ.get("LLAMA_BENCH_JSON") == "1"
+
+
+def _bench_emit(stream, started: float, iteration: int, tools: list[dict]) -> None:
+    """Print a single @@BENCH@@ JSON line describing one completed LLM iteration."""
+    if not BENCH_JSON:
+        return
+    record = {
+        "iteration": iteration,
+        "first_token_ms": round((stream.first_token_time - started) * 1000, 1)
+        if stream.first_token_time is not None else None,
+        "first_content_ms": round((stream.first_content_time - started) * 1000, 1)
+        if stream.first_content_time is not None else None,
+        "client_duration_s": round(stream.duration, 3),
+        "tokens": stream.final_token_count,
+        "context_total_tokens": stream.total_context_tokens,
+        "hit_max_tokens": stream.hit_max_tokens,
+        "content": stream.content,
+        "reasoning_chars": len(stream.reasoning),
+        "tools": tools,
+        "timings": stream.timings,
+        "system_fingerprint": stream.system_fingerprint,
+    }
+    # Plain print, single line — must bypass rich so the line survives piping.
+    print("@@BENCH@@" + _json.dumps(record, ensure_ascii=False), flush=True)
 
 
 def _build_api_messages(state: ChatState) -> list[dict]:
@@ -362,6 +394,7 @@ async def send_message(state: ChatState, user_input: str) -> str | None:
                         stream.total_context_tokens,
                         state.context_length,
                     )
+                    _bench_emit(stream, started, iteration, [])
                     return None
 
                 # Tool calls — add assistant message and execute
@@ -371,6 +404,7 @@ async def send_message(state: ChatState, user_input: str) -> str | None:
                     tool_calls=stream.tool_calls,
                 )
 
+                bench_tools: list[dict] = []
                 for tool_call in stream.tool_calls:
                     name = tool_call["function"]["name"]
                     raw_arguments = tool_call["function"]["arguments"]
@@ -384,6 +418,7 @@ async def send_message(state: ChatState, user_input: str) -> str | None:
                         ui.print_tool_call(name, arguments)
                         ui.print_tool_result(name, result)
                         state.session.add_message("tool", result, tool_call_id=tool_call_id, name=name)
+                        bench_tools.append({"name": name, "ok": False})
                         continue
 
                     ui.print_tool_call(name, arguments)
@@ -411,6 +446,7 @@ async def send_message(state: ChatState, user_input: str) -> str | None:
                             result = "User denied this tool call."
                             ui.print_tool_result(name, result)
                             state.session.add_message("tool", result, tool_call_id=tool_call_id, name=name)
+                            bench_tools.append({"name": name, "ok": False})
                             continue
                         elif response == "always":
                             if name == "write_file":
@@ -432,6 +468,7 @@ async def send_message(state: ChatState, user_input: str) -> str | None:
 
                     ui.print_tool_result(name, result)
                     state.session.add_message("tool", result, tool_call_id=tool_call_id, name=name)
+                    bench_tools.append({"name": name, "ok": not result.startswith("Error")})
 
                 # Show stats for this tool call iteration
                 ui.print_stats(
@@ -441,6 +478,7 @@ async def send_message(state: ChatState, user_input: str) -> str | None:
                     stream.total_context_tokens,
                     state.context_length,
                 )
+                _bench_emit(stream, started, iteration, bench_tools)
 
                 # Loop continues — next iteration will send updated history
 
