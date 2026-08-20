@@ -43,10 +43,14 @@ def test_load_config_from_env(monkeypatch):
     assert config.context_length == 8192
 
 
-def test_load_config_defaults(monkeypatch):
+def test_load_config_defaults(monkeypatch, tmp_path):
     for key in ["LLAMA_SERVERS", "LLAMA_SYSTEM_PROMPT", "LLAMA_MAX_TOKENS",
                 "LLAMA_TEMPERATURE", "LLAMA_CONTEXT_LENGTH"]:
         monkeypatch.delenv(key, raising=False)
+    # Isolate from the user's real ~/.config/llama-chat/.env so this tests
+    # the built-in defaults, not whatever the live config currently holds.
+    import config as config_module
+    monkeypatch.setattr(config_module, "ENV_PATH", tmp_path / "nonexistent.env")
 
     config = load_config()
 
