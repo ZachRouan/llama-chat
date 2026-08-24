@@ -1,5 +1,7 @@
 # llama-chat
 
+[![tests](https://github.com/ZachRouan/llama-chat/actions/workflows/tests.yml/badge.svg)](https://github.com/ZachRouan/llama-chat/actions/workflows/tests.yml)
+
 A lightweight terminal chat application for local LLMs running via [llama.cpp](https://github.com/ggerganov/llama.cpp)'s HTTP server. Features streaming responses, markdown rendering, multi-turn conversation memory, and support for multiple models across GPUs.
 
 ## Features
@@ -30,7 +32,7 @@ llama-server -m model.gguf -ngl 99 --host 0.0.0.0 --port 8082
 ### 2. Install and run
 
 ```bash
-git clone <repo-url>
+git clone https://github.com/ZachRouan/llama-chat.git
 cd llama-chat
 python3 -m venv .venv
 source .venv/bin/activate
@@ -59,6 +61,8 @@ Config is stored at `~/.config/llama-chat/.env`. Edit directly or delete to re-r
 | `LLAMA_MAX_TOKENS` | `8192` | Max tokens per response |
 | `LLAMA_TEMPERATURE` | `1.0` | Sampling temperature |
 | `LLAMA_CONTEXT_LENGTH` | `4096` | Fallback context window size |
+| `LLAMA_MAX_TOOL_ITERATIONS` | `15` | Max tool-loop iterations per message in agent mode |
+| `LLAMA_BENCH_JSON` | unset | `1` emits one machine-readable JSON line per turn (used by [local-chat-llm-benchmarking](https://github.com/ZachRouan/local-chat-llm-benchmarking)) |
 
 ## Commands
 
@@ -89,7 +93,7 @@ If a response hits the max token limit, a warning is shown.
 
 Type `/agent` to toggle agent mode. In this mode, the model can use tools to read files, write files, run shell commands, list directories, and search files. The model loops — calling tools and processing results — until it responds with plain text.
 
-Command output streams to your terminal in real time. The agent is capped at 15 tool iterations per message.
+Command output streams to your terminal in real time. The agent is capped at `LLAMA_MAX_TOOL_ITERATIONS` (default 15) tool iterations per message.
 
 ## Permissions
 
@@ -101,6 +105,10 @@ When prompted, you can respond:
 - **(a)lways** — add a permanent rule for this pattern
 
 Manage rules with `/permissions`, `/permissions clear`, or `/permissions remove <n>`.
+
+## Benchmarks
+
+[local-chat-llm-benchmarking](https://github.com/ZachRouan/local-chat-llm-benchmarking) drives this app as a subprocess to measure throughput, context scaling, and pass rates on 25 functionally-verified agentic coding tasks.
 
 ## Data
 
